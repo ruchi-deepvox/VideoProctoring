@@ -1,0 +1,822 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Live Interview Proctoring - Demo Client</title>
+    <script src="https://cdn.socket.io/4.6.0/socket.io.min.js"></script>
+    <style>
+        :root {
+            --bg-primary: #0f0f1a;
+            --bg-secondary: #1a1a2e;
+            --bg-card: #252542;
+            --accent: #7c3aed;
+            --accent-light: #a78bfa;
+            --success: #10b981;
+            --warning: #f59e0b;
+            --danger: #ef4444;
+            --text-primary: #f1f5f9;
+            --text-secondary: #94a3b8;
+            --border: #3f3f5a;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            background: linear-gradient(135deg, var(--bg-primary) 0%, var(--bg-secondary) 100%);
+            min-height: 100vh;
+            color: var(--text-primary);
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 30px;
+            padding: 20px;
+            background: var(--bg-card);
+            border-radius: 16px;
+            border: 1px solid var(--border);
+        }
+
+        h1 {
+            font-size: 2rem;
+            background: linear-gradient(90deg, var(--accent-light), var(--accent));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 8px;
+        }
+
+        .subtitle {
+            color: var(--text-secondary);
+            font-size: 0.95rem;
+        }
+
+        .main-grid {
+            display: grid;
+            grid-template-columns: 1fr 400px;
+            gap: 20px;
+        }
+
+        @media (max-width: 1024px) {
+            .main-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .video-section {
+            background: var(--bg-card);
+            border-radius: 16px;
+            padding: 20px;
+            border: 1px solid var(--border);
+        }
+
+        .video-container {
+            position: relative;
+            width: 100%;
+            aspect-ratio: 16/9;
+            background: #000;
+            border-radius: 12px;
+            overflow: hidden;
+            margin-bottom: 20px;
+        }
+
+        #videoElement {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .video-overlay {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            display: flex;
+            gap: 10px;
+        }
+
+        .status-badge {
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 0.8rem;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .status-badge.recording {
+            background: rgba(239, 68, 68, 0.9);
+            animation: pulse 2s infinite;
+        }
+
+        .status-badge.connected {
+            background: rgba(16, 185, 129, 0.9);
+        }
+
+        .status-badge.disconnected {
+            background: rgba(107, 114, 128, 0.9);
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.7; }
+        }
+
+        .controls {
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+
+        .btn {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            font-size: 0.95rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .btn-primary {
+            background: var(--accent);
+            color: white;
+        }
+
+        .btn-primary:hover:not(:disabled) {
+            background: var(--accent-light);
+            transform: translateY(-2px);
+        }
+
+        .btn-danger {
+            background: var(--danger);
+            color: white;
+        }
+
+        .btn-danger:hover:not(:disabled) {
+            background: #dc2626;
+        }
+
+        .btn-secondary {
+            background: var(--bg-secondary);
+            color: var(--text-primary);
+            border: 1px solid var(--border);
+        }
+
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .sidebar {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .card {
+            background: var(--bg-card);
+            border-radius: 16px;
+            padding: 20px;
+            border: 1px solid var(--border);
+        }
+
+        .card-title {
+            font-size: 1.1rem;
+            font-weight: 600;
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+        }
+
+        .metric-item {
+            background: var(--bg-secondary);
+            padding: 12px;
+            border-radius: 10px;
+            text-align: center;
+        }
+
+        .metric-value {
+            font-size: 1.8rem;
+            font-weight: 700;
+            color: var(--accent-light);
+        }
+
+        .metric-label {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            margin-top: 4px;
+        }
+
+        .progress-bar {
+            height: 6px;
+            background: var(--bg-secondary);
+            border-radius: 3px;
+            overflow: hidden;
+            margin-top: 8px;
+        }
+
+        .progress-fill {
+            height: 100%;
+            border-radius: 3px;
+            transition: width 0.3s ease;
+        }
+
+        .progress-fill.excellent { background: var(--success); }
+        .progress-fill.good { background: var(--accent); }
+        .progress-fill.moderate { background: var(--warning); }
+        .progress-fill.poor { background: var(--danger); }
+
+        .emotion-display {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+
+        .emotion-tag {
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 0.8rem;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+        }
+
+        .emotion-tag.dominant {
+            background: var(--accent);
+            border-color: var(--accent);
+        }
+
+        .alerts-list {
+            max-height: 200px;
+            overflow-y: auto;
+        }
+
+        .alert-item {
+            padding: 10px;
+            border-radius: 8px;
+            margin-bottom: 8px;
+            font-size: 0.85rem;
+            display: flex;
+            align-items: flex-start;
+            gap: 10px;
+        }
+
+        .alert-item.critical {
+            background: rgba(239, 68, 68, 0.15);
+            border-left: 3px solid var(--danger);
+        }
+
+        .alert-item.warning {
+            background: rgba(245, 158, 11, 0.15);
+            border-left: 3px solid var(--warning);
+        }
+
+        .alert-item.info {
+            background: rgba(124, 58, 237, 0.15);
+            border-left: 3px solid var(--accent);
+        }
+
+        .alert-time {
+            color: var(--text-secondary);
+            font-size: 0.75rem;
+            white-space: nowrap;
+        }
+
+        .settings-form {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .form-group label {
+            display: block;
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+            margin-bottom: 6px;
+        }
+
+        .form-group input, .form-group select {
+            width: 100%;
+            padding: 10px 12px;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            color: var(--text-primary);
+            font-size: 0.9rem;
+        }
+
+        .form-group input:focus, .form-group select:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+
+        #logOutput {
+            background: var(--bg-secondary);
+            border-radius: 8px;
+            padding: 12px;
+            font-family: 'Consolas', monospace;
+            font-size: 0.8rem;
+            max-height: 150px;
+            overflow-y: auto;
+            color: var(--text-secondary);
+        }
+
+        .log-entry {
+            margin-bottom: 4px;
+        }
+
+        .log-entry.error { color: var(--danger); }
+        .log-entry.success { color: var(--success); }
+        .log-entry.info { color: var(--accent-light); }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🎥 Live Interview Proctoring</h1>
+            <p class="subtitle">Real-time AI-powered interview analysis with face detection, emotion tracking, and behavioral insights</p>
+        </header>
+
+        <div class="main-grid">
+            <div class="video-section">
+                <div class="video-container">
+                    <video id="videoElement" autoplay muted playsinline></video>
+                    <div class="video-overlay">
+                        <span id="connectionStatus" class="status-badge disconnected">
+                            <span>●</span> Disconnected
+                        </span>
+                        <span id="recordingStatus" class="status-badge" style="display: none;">
+                            <span>●</span> Recording
+                        </span>
+                    </div>
+                </div>
+
+                <div class="controls">
+                    <button id="startBtn" class="btn btn-primary" onclick="startSession()">
+                        ▶ Start Session
+                    </button>
+                    <button id="stopBtn" class="btn btn-danger" onclick="endSession()" disabled>
+                        ⏹ End Session
+                    </button>
+                    <button class="btn btn-secondary" onclick="toggleSettings()">
+                        ⚙ Settings
+                    </button>
+                </div>
+
+                <div id="settingsPanel" class="card" style="margin-top: 20px; display: none;">
+                    <div class="card-title">⚙ Settings</div>
+                    <div class="settings-form">
+                        <div class="form-group">
+                            <label>Server URL</label>
+                            <input type="text" id="serverUrl" value="http://localhost:5001">
+                        </div>
+                        <div class="form-group">
+                            <label>Frame Interval (ms)</label>
+                            <input type="number" id="frameInterval" value="1000" min="500" max="5000">
+                        </div>
+                        <div class="form-group">
+                            <label>Job Title</label>
+                            <input type="text" id="jobTitle" value="Software Engineer">
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card" style="margin-top: 20px;">
+                    <div class="card-title">📋 Activity Log</div>
+                    <div id="logOutput"></div>
+                </div>
+            </div>
+
+            <div class="sidebar">
+                <div class="card">
+                    <div class="card-title">📊 Live Metrics</div>
+                    <div class="metrics-grid">
+                        <div class="metric-item">
+                            <div class="metric-value" id="eyeContactScore">--</div>
+                            <div class="metric-label">Eye Contact</div>
+                            <div class="progress-bar">
+                                <div class="progress-fill" id="eyeContactBar" style="width: 0%"></div>
+                            </div>
+                        </div>
+                        <div class="metric-item">
+                            <div class="metric-value" id="engagementScore">--</div>
+                            <div class="metric-label">Engagement</div>
+                            <div class="progress-bar">
+                                <div class="progress-fill" id="engagementBar" style="width: 0%"></div>
+                            </div>
+                        </div>
+                        <div class="metric-item">
+                            <div class="metric-value" id="confidenceScore">--</div>
+                            <div class="metric-label">Confidence</div>
+                            <div class="progress-bar">
+                                <div class="progress-fill" id="confidenceBar" style="width: 0%"></div>
+                            </div>
+                        </div>
+                        <div class="metric-item">
+                            <div class="metric-value" id="postureScore">--</div>
+                            <div class="metric-label">Posture</div>
+                            <div class="progress-bar">
+                                <div class="progress-fill" id="postureBar" style="width: 0%"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-title">😊 Current Emotion</div>
+                    <div class="emotion-display" id="emotionDisplay">
+                        <span class="emotion-tag">Waiting for data...</span>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-title">📈 Session Stats</div>
+                    <div class="metrics-grid">
+                        <div class="metric-item">
+                            <div class="metric-value" id="framesAnalyzed">0</div>
+                            <div class="metric-label">Frames Analyzed</div>
+                        </div>
+                        <div class="metric-item">
+                            <div class="metric-value" id="sessionDuration">0:00</div>
+                            <div class="metric-label">Duration</div>
+                        </div>
+                        <div class="metric-item">
+                            <div class="metric-value" id="alertCount">0</div>
+                            <div class="metric-label">Alerts</div>
+                        </div>
+                        <div class="metric-item">
+                            <div class="metric-value" id="faceDetected">--</div>
+                            <div class="metric-label">Face Status</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-title">⚠ Recent Alerts</div>
+                    <div class="alerts-list" id="alertsList">
+                        <p style="color: var(--text-secondary); font-size: 0.85rem;">No alerts yet</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <canvas id="captureCanvas" style="display: none;"></canvas>
+
+    <script>
+        let socket = null;
+        let sessionId = null;
+        let videoStream = null;
+        let captureInterval = null;
+        let sessionStartTime = null;
+        let durationInterval = null;
+
+        const videoElement = document.getElementById('videoElement');
+        const captureCanvas = document.getElementById('captureCanvas');
+        const ctx = captureCanvas.getContext('2d');
+
+        // Initialize camera
+        async function initCamera() {
+            try {
+                videoStream = await navigator.mediaDevices.getUserMedia({
+                    video: {
+                        width: { ideal: 1280 },
+                        height: { ideal: 720 },
+                        facingMode: 'user'
+                    }
+                });
+                videoElement.srcObject = videoStream;
+                log('Camera initialized successfully', 'success');
+            } catch (error) {
+                log('Failed to access camera: ' + error.message, 'error');
+            }
+        }
+
+        // Connect to WebSocket server
+        function connectSocket() {
+            const serverUrl = document.getElementById('serverUrl').value;
+            
+            socket = io(serverUrl, {
+                transports: ['websocket', 'polling'],
+                reconnection: true,
+                reconnectionAttempts: 5,
+                reconnectionDelay: 1000
+            });
+
+            socket.on('connect', () => {
+                updateConnectionStatus(true);
+                log('Connected to server', 'success');
+            });
+
+            socket.on('disconnect', () => {
+                updateConnectionStatus(false);
+                log('Disconnected from server', 'error');
+            });
+
+            socket.on('connect_error', (error) => {
+                log('Connection error: ' + error.message, 'error');
+            });
+
+            socket.on('session_started', (data) => {
+                sessionId = data.session_id;
+                log('Session started: ' + sessionId, 'success');
+                startCapturing();
+            });
+
+            socket.on('frame_analysis', (data) => {
+                updateMetrics(data.result);
+            });
+
+            socket.on('alerts', (data) => {
+                displayAlerts(data.alerts);
+            });
+
+            socket.on('live_metrics', (data) => {
+                updateAggregatedMetrics(data);
+            });
+
+            socket.on('session_ended', (data) => {
+                log('Session ended. Final report generated.', 'success');
+                console.log('Final Report:', data.report);
+                stopCapturing();
+                showFinalReport(data.report);
+            });
+
+            socket.on('frame_error', (data) => {
+                log('Frame error: ' + data.error, 'error');
+            });
+
+            socket.on('session_error', (data) => {
+                log('Session error: ' + data.error, 'error');
+            });
+        }
+
+        // Start session
+        function startSession() {
+            if (!socket || !socket.connected) {
+                connectSocket();
+                setTimeout(() => {
+                    if (socket && socket.connected) {
+                        initiateSession();
+                    }
+                }, 1000);
+            } else {
+                initiateSession();
+            }
+        }
+
+        function initiateSession() {
+            const jobTitle = document.getElementById('jobTitle').value;
+            
+            socket.emit('start_session', {
+                job_data: {
+                    jobTitle: jobTitle,
+                    timestamp: new Date().toISOString()
+                }
+            });
+
+            document.getElementById('startBtn').disabled = true;
+            document.getElementById('stopBtn').disabled = false;
+            document.getElementById('recordingStatus').style.display = 'flex';
+            document.getElementById('recordingStatus').classList.add('recording');
+
+            sessionStartTime = Date.now();
+            durationInterval = setInterval(updateDuration, 1000);
+        }
+
+        // Start capturing frames
+        function startCapturing() {
+            const interval = parseInt(document.getElementById('frameInterval').value) || 1000;
+            
+            captureInterval = setInterval(() => {
+                if (videoElement.readyState === videoElement.HAVE_ENOUGH_DATA) {
+                    captureAndSendFrame();
+                }
+            }, interval);
+
+            log('Started capturing frames every ' + interval + 'ms', 'info');
+        }
+
+        // Capture and send a frame
+        function captureAndSendFrame() {
+            captureCanvas.width = videoElement.videoWidth;
+            captureCanvas.height = videoElement.videoHeight;
+            ctx.drawImage(videoElement, 0, 0);
+            
+            const frameData = captureCanvas.toDataURL('image/jpeg', 0.8);
+            
+            socket.emit('analyze_frame', {
+                session_id: sessionId,
+                frame: frameData
+            });
+        }
+
+        // End session
+        function endSession() {
+            if (socket && sessionId) {
+                socket.emit('end_session', {
+                    session_id: sessionId,
+                    questionsWithAnswer: []
+                });
+            }
+
+            stopCapturing();
+            
+            document.getElementById('startBtn').disabled = false;
+            document.getElementById('stopBtn').disabled = true;
+            document.getElementById('recordingStatus').style.display = 'none';
+            
+            clearInterval(durationInterval);
+        }
+
+        // Stop capturing
+        function stopCapturing() {
+            if (captureInterval) {
+                clearInterval(captureInterval);
+                captureInterval = null;
+            }
+        }
+
+        // Update metrics display
+        function updateMetrics(result) {
+            if (result.error) return;
+
+            const metrics = result.metrics || {};
+            
+            updateMetricDisplay('eyeContact', metrics.eye_contact);
+            updateMetricDisplay('engagement', metrics.engagement);
+            updateMetricDisplay('confidence', metrics.confidence);
+            updateMetricDisplay('posture', metrics.posture);
+
+            // Update face status
+            const faceStatus = result.face_count > 0 ? '✓' : '✗';
+            document.getElementById('faceDetected').textContent = faceStatus;
+
+            // Update emotions
+            if (result.emotions) {
+                updateEmotionDisplay(result.emotions, result.dominant_emotion);
+            }
+
+            // Update frames count
+            document.getElementById('framesAnalyzed').textContent = result.frame_number || 0;
+
+            // Handle alerts
+            if (result.alerts && result.alerts.length > 0) {
+                displayAlerts(result.alerts);
+            }
+        }
+
+        function updateMetricDisplay(name, value) {
+            const scoreEl = document.getElementById(name + 'Score');
+            const barEl = document.getElementById(name + 'Bar');
+            
+            if (scoreEl && value !== undefined) {
+                scoreEl.textContent = value + '%';
+                
+                if (barEl) {
+                    barEl.style.width = value + '%';
+                    barEl.className = 'progress-fill ' + getScoreClass(value);
+                }
+            }
+        }
+
+        function getScoreClass(value) {
+            if (value >= 80) return 'excellent';
+            if (value >= 65) return 'good';
+            if (value >= 50) return 'moderate';
+            return 'poor';
+        }
+
+        function updateEmotionDisplay(emotions, dominant) {
+            const container = document.getElementById('emotionDisplay');
+            container.innerHTML = '';
+
+            // Sort emotions by confidence
+            const sorted = Object.entries(emotions)
+                .sort((a, b) => b[1] - a[1])
+                .slice(0, 4);
+
+            sorted.forEach(([emotion, confidence]) => {
+                const tag = document.createElement('span');
+                tag.className = 'emotion-tag' + (emotion === dominant ? ' dominant' : '');
+                tag.textContent = `${emotion} ${Math.round(confidence)}%`;
+                container.appendChild(tag);
+            });
+        }
+
+        function displayAlerts(alerts) {
+            const container = document.getElementById('alertsList');
+            const currentCount = parseInt(document.getElementById('alertCount').textContent) || 0;
+            document.getElementById('alertCount').textContent = currentCount + alerts.length;
+
+            alerts.forEach(alert => {
+                const alertEl = document.createElement('div');
+                alertEl.className = 'alert-item ' + alert.severity;
+                alertEl.innerHTML = `
+                    <span>${alert.message}</span>
+                    <span class="alert-time">${formatTime(alert.timestamp)}</span>
+                `;
+                
+                if (container.querySelector('p')) {
+                    container.innerHTML = '';
+                }
+                container.insertBefore(alertEl, container.firstChild);
+            });
+        }
+
+        function updateAggregatedMetrics(data) {
+            if (data.metrics) {
+                updateMetricDisplay('eyeContact', data.metrics.avg_eye_contact);
+                updateMetricDisplay('engagement', data.metrics.avg_engagement);
+                updateMetricDisplay('confidence', data.metrics.avg_confidence);
+            }
+            
+            document.getElementById('framesAnalyzed').textContent = data.frames_analyzed || 0;
+        }
+
+        function updateDuration() {
+            if (!sessionStartTime) return;
+            
+            const elapsed = Math.floor((Date.now() - sessionStartTime) / 1000);
+            const minutes = Math.floor(elapsed / 60);
+            const seconds = elapsed % 60;
+            document.getElementById('sessionDuration').textContent = 
+                `${minutes}:${seconds.toString().padStart(2, '0')}`;
+        }
+
+        function updateConnectionStatus(connected) {
+            const statusEl = document.getElementById('connectionStatus');
+            if (connected) {
+                statusEl.className = 'status-badge connected';
+                statusEl.innerHTML = '<span>●</span> Connected';
+            } else {
+                statusEl.className = 'status-badge disconnected';
+                statusEl.innerHTML = '<span>●</span> Disconnected';
+            }
+        }
+
+        function toggleSettings() {
+            const panel = document.getElementById('settingsPanel');
+            panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+        }
+
+        function log(message, type = 'info') {
+            const logOutput = document.getElementById('logOutput');
+            const entry = document.createElement('div');
+            entry.className = 'log-entry ' + type;
+            entry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+            logOutput.appendChild(entry);
+            logOutput.scrollTop = logOutput.scrollHeight;
+        }
+
+        function formatTime(seconds) {
+            const mins = Math.floor(seconds / 60);
+            const secs = Math.floor(seconds % 60);
+            return `${mins}:${secs.toString().padStart(2, '0')}`;
+        }
+
+        function showFinalReport(report) {
+            console.log('=== FINAL INTERVIEW REPORT ===');
+            console.log(JSON.stringify(report, null, 2));
+            alert('Session ended! Check the console for the full report.');
+        }
+
+        // Initialize on page load
+        window.onload = () => {
+            initCamera();
+            log('Ready to start live proctoring session', 'info');
+        };
+
+        // Cleanup on page unload
+        window.onbeforeunload = () => {
+            if (sessionId) {
+                endSession();
+            }
+            if (videoStream) {
+                videoStream.getTracks().forEach(track => track.stop());
+            }
+        };
+    </script>
+</body>
+</html>
+
