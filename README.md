@@ -1,212 +1,284 @@
-# Video Proctoring System
+# 🎥 Live Video Proctoring API
 
-AI-powered interview analysis system with support for both pre-recorded videos and **real-time live video sessions**.
+Real-time AI-powered interview video analysis with face detection, emotion tracking, and behavioral insights.
 
-## Features
+## ✨ Features
 
-### 🎥 Live Video Analysis (`face_live.py`)
-- **Real-time frame analysis** via WebSocket connection
-- **Face detection** with multi-face alerts
-- **Emotion tracking** (happy, sad, angry, surprised, calm, etc.)
-- **Eye contact monitoring** with looking-away detection
-- **Posture analysis** based on head position
-- **Engagement scoring** in real-time
-- **Suspicious object detection** (phones, notes, etc.)
-- **Text detection** for potential cheating
-- **Live metrics dashboard** with instant feedback
-- **Final comprehensive report** at session end
+- **Real-time Face Detection** - Detects faces and alerts for no face or multiple faces
+- **Emotion Tracking** - Tracks emotions (happy, sad, calm, angry, surprised, etc.)
+- **Eye Contact Monitoring** - Measures eye contact and alerts when looking away
+- **Posture Analysis** - Analyzes head position and stability
+- **Engagement Scoring** - Real-time engagement metrics
+- **Suspicious Object Detection** - Detects phones, notes, and other suspicious items
+- **Comprehensive Reports** - Final detailed analysis report at session end
 
-### 📹 Pre-recorded Video Analysis (`face.py`, `face1.py`)
-- Download and analyze videos from URLs
-- Frame extraction at configurable intervals
-- Comprehensive behavioral analysis
-- LLM-enhanced insights (OpenAI/Anthropic)
+---
 
-## Installation
+## 🚀 Quick Start
+
+### 1. Clone the Repository
 
 ```bash
-# Install dependencies
-pip install -r requirements.txt
-
-# Create .env file with your credentials
-cp .env.example .env
+git clone https://github.com/ruchi-deepvox/VideoProctoring.git
+cd VideoProctoring
 ```
 
-## Environment Variables
+### 2. Install Dependencies
 
-Create a `.env` file with:
+```bash
+pip install -r requirements.txt
+```
+
+### 3. Create Environment File
+
+Create a `.env` file in the project root:
 
 ```env
+# AWS Credentials (Required for face/emotion detection)
 AWS_ACCESS_KEY_ID=your_aws_access_key
 AWS_SECRET_ACCESS_KEY=your_aws_secret_key
-OPENAI_API_KEY=your_openai_key  # Optional - for LLM insights
-ANTHROPIC_API_KEY=your_anthropic_key  # Optional - alternative LLM
-SECRET_KEY=your_flask_secret_key
+
+# Optional - for AI-generated summaries
+OPENAI_API_KEY=your_openai_api_key
+
+# Flask secret key
+SECRET_KEY=your_random_secret_key
 ```
 
-## Running the Servers
+### 4. Run the Server
 
-### Live Video Server (Port 5001)
 ```bash
 python face_live.py
 ```
 
-### Pre-recorded Video Server (Port 5000)
-```bash
-python face.py
-# or
-python face1.py
-```
+Server will start at: **http://localhost:5001**
 
-## Live Video API
+### 5. Test the API
 
-### WebSocket Events
+Open in browser: http://localhost:5001/health
 
-Connect to: `ws://localhost:5001/socket.io/`
+Or test with the demo client: Open `client_example.html` in your browser.
 
-| Event | Direction | Description |
-|-------|-----------|-------------|
-| `connect` | Server → Client | Connection established |
-| `start_session` | Client → Server | Start new analysis session |
-| `session_started` | Server → Client | Session created with ID |
-| `analyze_frame` | Client → Server | Send frame for analysis |
-| `frame_analysis` | Server → Client | Real-time analysis result |
-| `alerts` | Server → Client | Proctoring alerts |
-| `get_live_metrics` | Client → Server | Request aggregated metrics |
-| `live_metrics` | Server → Client | Current session metrics |
-| `end_session` | Client → Server | End session |
-| `session_ended` | Server → Client | Final report |
+---
 
-### REST API Endpoints
+## 📡 API Endpoints
+
+### Base URL: `http://localhost:5001`
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST | `/api/sessions/start` | Start new session |
-| POST | `/api/sessions/{id}/frame` | Analyze single frame |
-| GET | `/api/sessions/{id}/metrics` | Get session metrics |
-| POST | `/api/sessions/{id}/end` | End session & get report |
-| GET | `/api/sessions` | List all sessions |
-| GET | `/health` | Health check |
+| `POST` | `/api/sessions/start` | Start a new proctoring session |
+| `POST` | `/api/sessions/{id}/frame` | Analyze a video frame |
+| `GET` | `/api/sessions/{id}/metrics` | Get current session metrics |
+| `GET` | `/api/sessions/{id}/alerts` | Get all session alerts |
+| `GET` | `/api/sessions/{id}/emotions` | Get emotion timeline |
+| `POST` | `/api/sessions/{id}/end` | End session & get final report |
+| `DELETE` | `/api/sessions/{id}` | Delete a session |
+| `GET` | `/api/sessions` | List all sessions |
+| `GET` | `/api/docs` | Full API documentation |
+| `GET` | `/health` | Health check |
 
-### Example: Start Session (WebSocket)
+---
 
-```javascript
-const socket = io('http://localhost:5001');
+## 🔧 Usage Examples
 
-socket.on('connect', () => {
-    socket.emit('start_session', {
-        job_data: { jobTitle: 'Software Engineer' }
-    });
-});
-
-socket.on('session_started', (data) => {
-    console.log('Session ID:', data.session_id);
-});
-```
-
-### Example: Send Frame for Analysis
-
-```javascript
-// Capture frame from video element
-const canvas = document.createElement('canvas');
-canvas.getContext('2d').drawImage(videoElement, 0, 0);
-const frameData = canvas.toDataURL('image/jpeg', 0.8);
-
-socket.emit('analyze_frame', {
-    session_id: sessionId,
-    frame: frameData
-});
-
-socket.on('frame_analysis', (data) => {
-    console.log('Eye Contact:', data.result.metrics.eye_contact);
-    console.log('Engagement:', data.result.metrics.engagement);
-    console.log('Dominant Emotion:', data.result.dominant_emotion);
-});
-```
-
-### Example: REST API (cURL)
+### Start a Session
 
 ```bash
-# Start session
 curl -X POST http://localhost:5001/api/sessions/start \
   -H "Content-Type: application/json" \
-  -d '{"job_data": {"jobTitle": "Developer"}}'
+  -d '{"job_data": {"jobTitle": "Software Engineer"}}'
+```
 
-# Analyze frame (base64)
-curl -X POST http://localhost:5001/api/sessions/{session_id}/frame \
+**Response:**
+```json
+{
+  "success": true,
+  "session_id": "abc-123-def",
+  "status": "active",
+  "start_time": "2024-01-17T10:30:00"
+}
+```
+
+### Analyze a Frame
+
+```bash
+curl -X POST http://localhost:5001/api/sessions/{SESSION_ID}/frame \
   -H "Content-Type: application/json" \
   -d '{"frame": "data:image/jpeg;base64,/9j/4AAQ..."}'
-
-# Get metrics
-curl http://localhost:5001/api/sessions/{session_id}/metrics
-
-# End session
-curl -X POST http://localhost:5001/api/sessions/{session_id}/end
 ```
 
-## Demo Client
-
-Open `client_example.html` in a browser to test the live video analysis:
-
-1. Allow camera access when prompted
-2. Click "Start Session" to begin
-3. Watch real-time metrics update
-4. Click "End Session" to see the final report
-
-## Analysis Metrics
-
-### Real-time Metrics (per frame)
-- **Eye Contact Score** (0-100): Based on face yaw/pitch angles
-- **Engagement Score** (0-100): Composite of expressions + eye contact
-- **Facial Expression Score** (0-100): Based on positive emotions
-- **Posture Score** (0-100): Based on head stability
-- **Confidence Score** (0-100): Face detection confidence
-
-### Alerts
-| Alert Type | Severity | Trigger |
-|------------|----------|---------|
-| `no_face_detected` | Warning | 3+ consecutive frames without face |
-| `multiple_faces_detected` | Critical | More than one face in frame |
-| `looking_away` | Warning | Yaw > 30° or Pitch > 25° for 5+ frames |
-| `low_engagement` | Info | Engagement < 40% for 10+ frames |
-| `suspicious_object` | Warning | Phone, paper, etc. detected (>70% confidence) |
-| `text_detected` | Info | Significant text visible in frame |
-
-### Final Report Includes
-- Session summary (duration, frames analyzed)
-- Behavioral analysis scores
-- Body language assessment
-- Cultural fit analysis
-- Emotion timeline
-- Complete alert history
-- AI-generated summary (if LLM configured)
-- Token consumption metrics
-
-## Architecture
-
-```
-┌─────────────────┐     WebSocket      ┌──────────────────┐
-│  Browser/Client │ ◄─────────────────► │  Flask-SocketIO  │
-│  (camera feed)  │                     │    Server        │
-└─────────────────┘                     └────────┬─────────┘
-                                                 │
-                                                 ▼
-                                        ┌──────────────────┐
-                                        │  AWS Rekognition │
-                                        │  - Face Detection│
-                                        │  - Label Detection│
-                                        │  - Text Detection │
-                                        └────────┬─────────┘
-                                                 │
-                                                 ▼
-                                        ┌──────────────────┐
-                                        │  LLM (Optional)  │
-                                        │  - OpenAI GPT-4  │
-                                        │  - Anthropic     │
-                                        └──────────────────┘
+**Response:**
+```json
+{
+  "success": true,
+  "result": {
+    "face_count": 1,
+    "metrics": {
+      "eye_contact": 85,
+      "engagement": 78,
+      "confidence": 92,
+      "posture": 88
+    },
+    "dominant_emotion": "CALM",
+    "alerts": []
+  }
+}
 ```
 
-## License
+### Get Session Metrics
 
-MIT
+```bash
+curl http://localhost:5001/api/sessions/{SESSION_ID}/metrics
+```
 
+### End Session & Get Report
+
+```bash
+curl -X POST http://localhost:5001/api/sessions/{SESSION_ID}/end
+```
+
+---
+
+## 🖥️ JavaScript Integration
+
+```javascript
+// 1. Start Session
+const startResponse = await fetch('http://localhost:5001/api/sessions/start', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ job_data: { jobTitle: 'Developer' } })
+});
+const { session_id } = await startResponse.json();
+
+// 2. Capture and Send Frames (every 1 second)
+const video = document.getElementById('webcam');
+const canvas = document.createElement('canvas');
+const ctx = canvas.getContext('2d');
+
+setInterval(async () => {
+  canvas.width = video.videoWidth;
+  canvas.height = video.videoHeight;
+  ctx.drawImage(video, 0, 0);
+  const frameData = canvas.toDataURL('image/jpeg', 0.8);
+
+  const response = await fetch(`http://localhost:5001/api/sessions/${session_id}/frame`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ frame: frameData })
+  });
+  
+  const result = await response.json();
+  console.log('Eye Contact:', result.result.metrics.eye_contact);
+  console.log('Emotion:', result.result.dominant_emotion);
+}, 1000);
+
+// 3. End Session
+const report = await fetch(`http://localhost:5001/api/sessions/${session_id}/end`, {
+  method: 'POST'
+});
+const finalReport = await report.json();
+console.log('Final Report:', finalReport);
+```
+
+---
+
+## ⚠️ Alert Types
+
+| Alert | Severity | Description |
+|-------|----------|-------------|
+| `no_face_detected` | Warning | No face visible for 3+ frames |
+| `multiple_faces_detected` | Critical | More than one person detected |
+| `looking_away` | Warning | Not looking at screen |
+| `low_engagement` | Info | Low engagement detected |
+| `suspicious_object` | Warning | Phone/notes detected |
+| `text_detected` | Info | Text visible in frame |
+
+---
+
+## 📊 Metrics Explained
+
+| Metric | Range | Description |
+|--------|-------|-------------|
+| `eye_contact` | 0-100 | How well the candidate maintains eye contact |
+| `engagement` | 0-100 | Overall engagement level |
+| `confidence` | 0-100 | Face detection confidence |
+| `posture` | 0-100 | Head position stability |
+| `facial_expression` | 0-100 | Positive expression score |
+
+---
+
+## 🧪 Demo Client
+
+A demo HTML client is included for testing:
+
+1. Start the server: `python face_live.py`
+2. Open `client_example.html` in your browser
+3. Allow camera access
+4. Click "Start Session"
+5. Watch real-time metrics update
+6. Click "End Session" to see the final report
+
+---
+
+## 📁 Project Structure
+
+```
+VideoProctoring/
+├── face_live.py          # Main API server
+├── client_example.html   # Demo client for testing
+├── requirements.txt      # Python dependencies
+├── .env                  # Environment variables (create this)
+├── .gitignore           # Git ignore file
+└── README.md            # This file
+```
+
+---
+
+## 🔒 Security Notes
+
+- **Never commit `.env` file** to git (it's in `.gitignore`)
+- Rotate API keys if accidentally exposed
+- Use HTTPS in production
+- Add authentication for production use
+
+---
+
+## 📋 Requirements
+
+- Python 3.8+
+- AWS Account with Rekognition access
+- OpenAI API key (optional, for AI summaries)
+
+---
+
+## 🐛 Troubleshooting
+
+### "AWS credentials not configured"
+- Make sure `.env` file exists with valid AWS credentials
+- Check there are no spaces before `=` in the `.env` file
+
+### "No frames being analyzed"
+- Check AWS credentials are correct
+- Verify camera permissions are granted
+- Check browser console for errors
+
+### CORS errors
+- The API allows all origins by default
+- For production, configure specific allowed origins
+
+---
+
+## 📄 License
+
+MIT License
+
+---
+
+## 🤝 Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Commit your changes
+4. Push to the branch
+5. Open a Pull Request

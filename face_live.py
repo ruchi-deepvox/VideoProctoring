@@ -1,5 +1,6 @@
 from flask import Flask, request, jsonify, make_response
 from flask_socketio import SocketIO, emit, join_room, leave_room
+from flask_cors import CORS
 import boto3
 import json
 import cv2
@@ -13,6 +14,8 @@ from typing import Dict, List, Any, Optional
 import threading
 from collections import defaultdict
 import uuid
+import requests
+import tempfile
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -20,6 +23,9 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'your-secret-key-here')
+
+# Enable CORS for all routes and origins
+CORS(app, resources={r"/*": {"origins": "*"}}, supports_credentials=False)
 
 # Initialize SocketIO with CORS allowed for all origins
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading', 
@@ -40,24 +46,29 @@ active_sessions: Dict[str, 'LiveInterviewSession'] = {}
 session_lock = threading.Lock()
 
 
-# CORS Configuration
+# CORS Configuration - Belt and suspenders approach
 @app.after_request
 def after_request(response):
-    response.headers['Access-Control-Allow-Origin'] = '*'
+    origin = request.headers.get('Origin', '*')
+    response.headers['Access-Control-Allow-Origin'] = origin if origin else '*'
     response.headers['Access-Control-Allow-Headers'] = 'Content-Type,Authorization,X-Requested-With,Accept,Origin,X-API-Key,Cache-Control,Pragma'
     response.headers['Access-Control-Allow-Methods'] = 'GET,PUT,POST,DELETE,OPTIONS,PATCH,HEAD'
     response.headers['Access-Control-Allow-Credentials'] = 'false'
     response.headers['Access-Control-Max-Age'] = '86400'
+    response.headers['Vary'] = 'Origin'
     return response
 
 
 @app.before_request
 def handle_preflight():
     if request.method == "OPTIONS":
+        origin = request.headers.get('Origin', '*')
         response = make_response()
-        response.headers['Access-Control-Allow-Origin'] = '*'
-        response.headers['Access-Control-Allow-Headers'] = '*'
-        response.headers['Access-Control-Allow-Methods'] = '*'
+        response.headers['Access-Control-Allow-Origin'] = origin if origin else '*'
+        response.headers['Access-Control-Allow-Headers'] = 'Content-Type,Authorization,X-Requested-With,Accept,Origin,X-API-Key,Cache-Control,Pragma'
+        response.headers['Access-Control-Allow-Methods'] = 'GET,PUT,POST,DELETE,OPTIONS,PATCH,HEAD'
+        response.headers['Access-Control-Allow-Credentials'] = 'false'
+        response.headers['Access-Control-Max-Age'] = '86400'
         return response
 
 
@@ -1229,20 +1240,192 @@ const finalReport = await report.json();
     })
 
 
+# ==================== COMPREHENSIVE INTERVIEW ANALYSIS (Video URL based) ====================
+
+@app.route('/comprehensive-interview-analysis', methods=['POST', 'OPTIONS'])
+def comprehensive_interview_analysis():
+    """
+    Comprehensive interview analysis endpoint for pre-recorded videos.
+    Accepts video URL, analyzes frames, and returns detailed report.
+    """
+    if request.method == 'OPTIONS':
+        return make_response(), 200
+    
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({
+                'success': False,
+                'error': 'Request body is required'
+            }), 400
+        
+        # Get parameters
+        video_url = data.get('video_url')
+        questions_with_answers = data.get('questionsWithAnswer', [])
+        job_data = data.get('jobData', {})
+        frame_interval = data.get('frame_interval', 60)
+        
+        if not video_url:
+            return jsonify({
+                'success': False,
+                'error': 'video_url is required'
+            }), 400
+        
+        logger.info(f"Starting comprehensive analysis for video: {video_url}")
+        
+        # Create a session for analysis
+        session_id = str(uuid.uuid4())
+        session = LiveInterviewSession(session_id, job_data)
+        
+        # Download and analyze video
+        temp_video_path = None
+        try:
+            # Download video
+            temp_video_path = download_video(video_url)
+            
+            # Extract and analyze frames
+            analyze_video_frames(session, temp_video_path, frame_interval)
+            
+            # Generate final report
+            report = session.generate_final_report()
+            
+            # Add Q&A analysis if provided
+            if questions_with_answers:
+                qa_analysis = analyze_questions(questions_with_answers, job_data)
+                report['qa_analysis'] = qa_analysis
+            
+            return jsonify({
+                'success': True,
+                'status': 'success',
+                'timestamp': datetime.now().isoformat(),
+                'video_url': video_url,
+                'job_title': job_data.get('jobTitle', 'Not specified'),
+                **report
+            })
+            
+        finally:
+            if temp_video_path and os.path.exists(temp_video_path):
+                try:
+                    os.unlink(temp_video_path)
+                except:
+                    pass
+                    
+    except Exception as e:
+        logger.error(f"Comprehensive analysis error: {str(e)}")
+        return jsonify({
+            'success': False,
+            'status': 'error',
+            'error': str(e),
+            'timestamp': datetime.now().isoformat()
+        }), 500
+
+
+def download_video(video_url: str) -> str:
+    """Download video from URL to temporary file"""
+    logger.info(f"Downloading video from: {video_url}")
+    
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+    }
+    
+    response = requests.get(video_url, stream=True, timeout=120, headers=headers)
+    response.raise_for_status()
+    
+    content_type = response.headers.get('content-type', '')
+    file_extension = '.mp4'
+    if 'webm' in content_type:
+        file_extension = '.webm'
+    elif 'avi' in content_type:
+        file_extension = '.avi'
+    
+    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=file_extension)
+    
+    for chunk in response.iter_content(chunk_size=8192):
+        if chunk:
+            temp_file.write(chunk)
+    
+    temp_file.close()
+    logger.info(f"Video downloaded to: {temp_file.name}")
+    return temp_file.name
+
+
+def analyze_video_frames(session: 'LiveInterviewSession', video_path: str, frame_interval: int = 60):
+    """Extract frames from video and analyze each"""
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        raise Exception("Could not open video file")
+    
+    frame_count = 0
+    fps = cap.get(cv2.CAP_PROP_FPS) or 30
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    
+    logger.info(f"Video: {total_frames} frames, {fps} fps, analyzing every {frame_interval} frames")
+    
+    while cap.isOpened():
+        ret, frame = cap.read()
+        if not ret:
+            break
+        
+        if frame_count % frame_interval == 0:
+            # Encode frame to JPEG
+            _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+            frame_bytes = buffer.tobytes()
+            
+            # Analyze frame
+            session.analyze_frame(frame_bytes)
+            logger.info(f"Analyzed frame {frame_count}/{total_frames}")
+        
+        frame_count += 1
+    
+    cap.release()
+    logger.info(f"Video analysis complete. Processed {session.analyzed_frame_count} frames.")
+
+
+def analyze_questions(questions_with_answers: list, job_data: dict) -> dict:
+    """Analyze Q&A data"""
+    total_questions = len(questions_with_answers)
+    answered = [q for q in questions_with_answers if q.get('score', 0) > 0]
+    
+    # Calculate scores by category
+    category_scores = {}
+    for q in questions_with_answers:
+        category = q.get('questionDetails', {}).get('category', 'General')
+        score = q.get('score', 0)
+        if category not in category_scores:
+            category_scores[category] = []
+        category_scores[category].append(score)
+    
+    category_averages = {}
+    for cat, scores in category_scores.items():
+        if scores:
+            category_averages[cat] = round(sum(scores) / len(scores) * 20, 1)
+    
+    overall_score = sum(q.get('score', 0) for q in questions_with_answers) / max(total_questions, 1) * 20
+    
+    return {
+        'total_questions': total_questions,
+        'answered_questions': len(answered),
+        'overall_score_percentage': round(overall_score, 1),
+        'category_averages': category_averages,
+        'completion_rate': round(len(answered) / max(total_questions, 1) * 100, 1)
+    }
+
+
 @app.route('/health', methods=['GET'])
 def health_check():
     """Health check endpoint"""
     return jsonify({
         'status': 'healthy',
         'service': 'Live Interview Analyzer API',
-        'version': '1.0.0',
+        'version': '2.0.0',
         'timestamp': datetime.now().isoformat(),
         'features': {
             'aws_rekognition': AWS_ACCESS_KEY_ID is not None,
             'openai_llm': OPENAI_API_KEY is not None,
             'anthropic_llm': ANTHROPIC_API_KEY is not None,
             'websocket_enabled': True,
-            'rest_api_enabled': True
+            'rest_api_enabled': True,
+            'video_url_analysis': True
         },
         'active_sessions': len([s for s in active_sessions.values() if s.is_active])
     })
