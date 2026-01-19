@@ -717,10 +717,16 @@ class LiveInterviewSession:
         if not self.llm_provider:
             return None
         
+        # Define alert_types BEFORE using it in the prompt
+        alert_types = [a['type'] for a in self.alert_history]
+        alert_summary = {}
+        for alert_type in alert_types:
+            alert_summary[alert_type] = alert_types.count(alert_type)
+        
         prompt = f"""
         Based on the following live interview video analysis data, provide a comprehensive evaluation summary:
         
-        Session Duration: {(self.end_time or datetime.now() - self.start_time).total_seconds():.0f} seconds
+        Session Duration: {((self.end_time or datetime.now()) - self.start_time).total_seconds():.0f} seconds
         Frames Analyzed: {self.analyzed_frame_count}
         Total Alerts: {len(self.alert_history)}
         
@@ -733,7 +739,7 @@ class LiveInterviewSession:
         
         Body Language Score: {body_language_analysis.get('overall_score', 0)}%
         
-        Alert Summary: {dict((a['type'], alert_types.count(a['type'])) for a in self.alert_history) if self.alert_history else 'No alerts'}
+        Alert Summary: {alert_summary if alert_summary else 'No alerts'}
         
         Provide your response in JSON format:
         {{
@@ -743,8 +749,6 @@ class LiveInterviewSession:
             "overallVideoScore": 75
         }}
         """
-        
-        alert_types = [a['type'] for a in self.alert_history]
         
         try:
             if self.llm_provider == 'openai':
@@ -1209,7 +1213,9 @@ def api_docs():
         'integration_example': {
             'javascript': '''
 // 1. Start Session
-const API_BASE = 'https://fexo.deepvox.ai';
+//nst API_BASE = 'https://fexo.deepvox.ai';
+const API_BASE = 'http://localhost:5001';
+
 
 const response = await fetch(`${API_BASE}/api/sessions/start`, {
     method: 'POST',
