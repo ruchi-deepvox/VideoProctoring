@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Live Interview Proctoring - Demo Client</title>
-    <script src="https://cdn.socket.io/4.6.0/socket.io.min.js"></script>
+    <!-- Using REST API - no WebSocket dependency needed -->
     <style>
         :root {
             --bg-primary: #0f0f1a;
@@ -388,7 +388,7 @@
                     <div class="settings-form">
                         <div class="form-group">
                             <label>Server URL</label>
-                            <input type="text" id="serverUrl" value="http://localhost:5001">
+                            <input type="text" id="serverUrl" value="https://fexo.deepvox.ai">
                         </div>
                         <div class="form-group">
                             <label>Frame Interval (ms)</label>
@@ -484,16 +484,21 @@
     <canvas id="captureCanvas" style="display: none;"></canvas>
 
     <script>
-        let socket = null;
         let sessionId = null;
         let videoStream = null;
         let captureInterval = null;
         let sessionStartTime = null;
         let durationInterval = null;
+        let isConnected = false;
 
         const videoElement = document.getElementById('videoElement');
         const captureCanvas = document.getElementById('captureCanvas');
         const ctx = captureCanvas.getContext('2d');
+
+        // Get API base URL
+        function getApiUrl() {
+            return document.getElementById('serverUrl').value;
+        }
 
         // Initialize camera
         async function initCamera() {
@@ -512,89 +517,71 @@
             }
         }
 
-        // Connect to WebSocket server
-        function connectSocket() {
-            const serverUrl = document.getElementById('serverUrl').value;
-            
-            socket = io(serverUrl, {
-                transports: ['websocket', 'polling'],
-                reconnection: true,
-                reconnectionAttempts: 5,
-                reconnectionDelay: 1000
-            });
-
-            socket.on('connect', () => {
-                updateConnectionStatus(true);
-                log('Connected to server', 'success');
-            });
-
-            socket.on('disconnect', () => {
-                updateConnectionStatus(false);
-                log('Disconnected from server', 'error');
-            });
-
-            socket.on('connect_error', (error) => {
+        // Test connection to server
+        async function testConnection() {
+            try {
+                const response = await fetch(`${getApiUrl()}/health`);
+                if (response.ok) {
+                    const data = await response.json();
+                    isConnected = true;
+                    updateConnectionStatus(true);
+                    log('Connected to server (REST API)', 'success');
+                    return true;
+                }
+            } catch (error) {
                 log('Connection error: ' + error.message, 'error');
-            });
-
-            socket.on('session_started', (data) => {
-                sessionId = data.session_id;
-                log('Session started: ' + sessionId, 'success');
-                startCapturing();
-            });
-
-            socket.on('frame_analysis', (data) => {
-                updateMetrics(data.result);
-            });
-
-            socket.on('alerts', (data) => {
-                displayAlerts(data.alerts);
-            });
-
-            socket.on('live_metrics', (data) => {
-                updateAggregatedMetrics(data);
-            });
-
-            socket.on('session_ended', (data) => {
-                log('Session ended. Final report generated.', 'success');
-                console.log('Final Report:', data.report);
-                stopCapturing();
-                showFinalReport(data.report);
-            });
-
-            socket.on('frame_error', (data) => {
-                log('Frame error: ' + data.error, 'error');
-            });
-
-            socket.on('session_error', (data) => {
-                log('Session error: ' + data.error, 'error');
-            });
+            }
+            isConnected = false;
+            updateConnectionStatus(false);
+            return false;
         }
 
-        // Start session
-        function startSession() {
-            if (!socket || !socket.connected) {
-                connectSocket();
-                setTimeout(() => {
-                    if (socket && socket.connected) {
-                        initiateSession();
-                    }
-                }, 1000);
-            } else {
-                initiateSession();
+        // Start session using REST API
+        async function startSession() {
+            const connected = await testConnection();
+            if (!connected) {
+                log('Cannot start session - server not reachable', 'error');
+                return;
+            }
+
+            try {
+                const jobTitle = document.getElementById('jobTitle').value;
+                const response = await fetch(`${getApiUrl()}/api/sessions/start`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        job_data: {
+                            jobTitle: jobTitle,
+                            timestamp: new Date().toISOString()
+                        }
+                    })
+                });
+
+                const data = await response.json();
+                
+                if (data.success) {
+                    sessionId = data.session_id;
+                    log('Session started: ' + sessionId, 'success');
+                    startCapturing();
+                    
+                    document.getElementById('startBtn').disabled = true;
+                    document.getElementById('stopBtn').disabled = false;
+                    document.getElementById('recordingStatus').style.display = 'flex';
+                    document.getElementById('recordingStatus').classList.add('recording');
+
+                    sessionStartTime = Date.now();
+                    durationInterval = setInterval(updateDuration, 1000);
+                } else {
+                    log('Failed to start session: ' + data.error, 'error');
+                }
+            } catch (error) {
+                log('Error starting session: ' + error.message, 'error');
             }
         }
 
+        // Legacy function for compatibility
         function initiateSession() {
-            const jobTitle = document.getElementById('jobTitle').value;
-            
-            socket.emit('start_session', {
-                job_data: {
-                    jobTitle: jobTitle,
-                    timestamp: new Date().toISOString()
-                }
-            });
-
+            // Now handled by startSession directly
             document.getElementById('startBtn').disabled = true;
             document.getElementById('stopBtn').disabled = false;
             document.getElementById('recordingStatus').style.display = 'flex';
@@ -617,27 +604,57 @@
             log('Started capturing frames every ' + interval + 'ms', 'info');
         }
 
-        // Capture and send a frame
-        function captureAndSendFrame() {
+        // Capture and send a frame using REST API
+        async function captureAndSendFrame() {
+            if (!sessionId) return;
+            
             captureCanvas.width = videoElement.videoWidth;
             captureCanvas.height = videoElement.videoHeight;
             ctx.drawImage(videoElement, 0, 0);
             
             const frameData = captureCanvas.toDataURL('image/jpeg', 0.8);
             
-            socket.emit('analyze_frame', {
-                session_id: sessionId,
-                frame: frameData
-            });
+            try {
+                const response = await fetch(`${getApiUrl()}/api/sessions/${sessionId}/frame`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ frame: frameData })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success && data.result) {
+                    updateMetrics(data.result);
+                    
+                    // Handle alerts
+                    if (data.result.alerts && data.result.alerts.length > 0) {
+                        displayAlerts(data.result.alerts);
+                    }
+                }
+            } catch (error) {
+                console.error('Frame analysis error:', error);
+            }
         }
 
-        // End session
-        function endSession() {
-            if (socket && sessionId) {
-                socket.emit('end_session', {
-                    session_id: sessionId,
-                    questionsWithAnswer: []
-                });
+        // End session using REST API
+        async function endSession() {
+            if (sessionId) {
+                try {
+                    const response = await fetch(`${getApiUrl()}/api/sessions/${sessionId}/end`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' }
+                    });
+                    
+                    const data = await response.json();
+                    
+                    if (data.success) {
+                        log('Session ended. Final report generated.', 'success');
+                        console.log('Final Report:', data.report);
+                        showFinalReport(data.report);
+                    }
+                } catch (error) {
+                    log('Error ending session: ' + error.message, 'error');
+                }
             }
 
             stopCapturing();
@@ -647,6 +664,7 @@
             document.getElementById('recordingStatus').style.display = 'none';
             
             clearInterval(durationInterval);
+            sessionId = null;
         }
 
         // Stop capturing
@@ -802,15 +820,21 @@
         }
 
         // Initialize on page load
-        window.onload = () => {
+        window.onload = async () => {
             initCamera();
-            log('Ready to start live proctoring session', 'info');
+            log('Ready to start live proctoring session (REST API mode)', 'info');
+            
+            // Test connection to server
+            setTimeout(async () => {
+                await testConnection();
+            }, 1000);
         };
 
         // Cleanup on page unload
         window.onbeforeunload = () => {
             if (sessionId) {
-                endSession();
+                // Send sync request to end session
+                navigator.sendBeacon(`${getApiUrl()}/api/sessions/${sessionId}/end`);
             }
             if (videoStream) {
                 videoStream.getTracks().forEach(track => track.stop());

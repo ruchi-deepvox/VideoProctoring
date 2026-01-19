@@ -1209,7 +1209,9 @@ def api_docs():
         'integration_example': {
             'javascript': '''
 // 1. Start Session
-const response = await fetch('http://localhost:5001/api/sessions/start', {
+const API_BASE = 'https://fexo.deepvox.ai';
+
+const response = await fetch(`${API_BASE}/api/sessions/start`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ job_data: { jobTitle: 'Developer' } })
@@ -1222,7 +1224,7 @@ const ctx = canvas.getContext('2d');
 ctx.drawImage(videoElement, 0, 0);
 const frameData = canvas.toDataURL('image/jpeg', 0.8);
 
-const analysis = await fetch(`http://localhost:5001/api/sessions/${session_id}/frame`, {
+const analysis = await fetch(`${API_BASE}/api/sessions/${session_id}/frame`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ frame: frameData })
@@ -1231,7 +1233,7 @@ const result = await analysis.json();
 console.log('Eye Contact:', result.result.metrics.eye_contact);
 
 // 3. End Session & Get Report
-const report = await fetch(`http://localhost:5001/api/sessions/${session_id}/end`, {
+const report = await fetch(`${API_BASE}/api/sessions/${session_id}/end`, {
     method: 'POST'
 });
 const finalReport = await report.json();

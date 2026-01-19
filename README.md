@@ -51,11 +51,11 @@ SECRET_KEY=your_random_secret_key
 python face_live.py
 ```
 
-Server will start at: **http://localhost:5001**
+Server will start at: **https://fexo.deepvox.ai** (production) or `http://localhost:5001` (local)
 
 ### 5. Test the API
 
-Open in browser: http://localhost:5001/health
+Open in browser: https://fexo.deepvox.ai/health
 
 Or test with the demo client: Open `client_example.html` in your browser.
 
@@ -63,7 +63,7 @@ Or test with the demo client: Open `client_example.html` in your browser.
 
 ## 📡 API Endpoints
 
-### Base URL: `http://localhost:5001`
+### Base URL: `https://fexo.deepvox.ai`
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
@@ -85,7 +85,7 @@ Or test with the demo client: Open `client_example.html` in your browser.
 ### Start a Session
 
 ```bash
-curl -X POST http://localhost:5001/api/sessions/start \
+curl -X POST https://fexo.deepvox.ai/api/sessions/start \
   -H "Content-Type: application/json" \
   -d '{"job_data": {"jobTitle": "Software Engineer"}}'
 ```
@@ -103,7 +103,7 @@ curl -X POST http://localhost:5001/api/sessions/start \
 ### Analyze a Frame
 
 ```bash
-curl -X POST http://localhost:5001/api/sessions/{SESSION_ID}/frame \
+curl -X POST https://fexo.deepvox.ai/api/sessions/{SESSION_ID}/frame \
   -H "Content-Type: application/json" \
   -d '{"frame": "data:image/jpeg;base64,/9j/4AAQ..."}'
 ```
@@ -129,13 +129,13 @@ curl -X POST http://localhost:5001/api/sessions/{SESSION_ID}/frame \
 ### Get Session Metrics
 
 ```bash
-curl http://localhost:5001/api/sessions/{SESSION_ID}/metrics
+curl https://fexo.deepvox.ai/api/sessions/{SESSION_ID}/metrics
 ```
 
 ### End Session & Get Report
 
 ```bash
-curl -X POST http://localhost:5001/api/sessions/{SESSION_ID}/end
+curl -X POST https://fexo.deepvox.ai/api/sessions/{SESSION_ID}/end
 ```
 
 ---
@@ -143,8 +143,10 @@ curl -X POST http://localhost:5001/api/sessions/{SESSION_ID}/end
 ## 🖥️ JavaScript Integration
 
 ```javascript
+const API_BASE = 'https://fexo.deepvox.ai';
+
 // 1. Start Session
-const startResponse = await fetch('http://localhost:5001/api/sessions/start', {
+const startResponse = await fetch(`${API_BASE}/api/sessions/start`, {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({ job_data: { jobTitle: 'Developer' } })
@@ -162,7 +164,7 @@ setInterval(async () => {
   ctx.drawImage(video, 0, 0);
   const frameData = canvas.toDataURL('image/jpeg', 0.8);
 
-  const response = await fetch(`http://localhost:5001/api/sessions/${session_id}/frame`, {
+  const response = await fetch(`${API_BASE}/api/sessions/${session_id}/frame`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ frame: frameData })
@@ -174,7 +176,7 @@ setInterval(async () => {
 }, 1000);
 
 // 3. End Session
-const report = await fetch(`http://localhost:5001/api/sessions/${session_id}/end`, {
+const report = await fetch(`${API_BASE}/api/sessions/${session_id}/end`, {
   method: 'POST'
 });
 const finalReport = await report.json();
