@@ -151,6 +151,16 @@ class LiveInterviewSession:
         self.looking_away_counter = 0
         self.low_engagement_counter = 0
         
+        # Face verification
+        self.reference_face_image: bytes = None  # Stored reference face image
+        self.face_registered = False
+        self.face_verification_enabled = True
+        self.face_match_scores: List[float] = []  # Track match scores over time
+        self.face_mismatch_counter = 0
+        self.face_mismatch_threshold = 3  # Alert after 3 consecutive mismatches
+        self.face_similarity_threshold = 80.0  # Minimum similarity percentage to consider a match
+        self.verification_results: List[Dict] = []  # Store all verification results
+        
         # Initialize AWS client
         try:
             self.rekognition = boto3.client(
@@ -182,6 +192,190 @@ class LiveInterviewSession:
                 self.llm_provider = 'anthropic'
             except Exception as e:
                 logger.error(f"Failed to initialize Anthropic: {e}")
+    
+    def register_face(self, face_image: bytes) -> Dict:
+        """Register the candidate's reference face for verification"""
+        if not self.rekognition:
+            return {'success': False, 'error': 'AWS Rekognition not initialized'}
+        
+        try:
+            # Detect face in the reference image
+            face_response = self.rekognition.detect_faces(
+                Image={'Bytes': face_image},
+                Attributes=['DEFAULT']
+            )
+            
+            faces = face_response.get('FaceDetails', [])
+            
+            if len(faces) == 0:
+                return {
+                    'success': False,
+                    'error': 'No face detected in the image. Please ensure your face is clearly visible.'
+                }
+            
+            if len(faces) > 1:
+                return {
+                    'success': False,
+                    'error': 'Multiple faces detected. Please ensure only you are in the frame.'
+                }
+            
+            # Check face quality
+            face = faces[0]
+            confidence = face.get('Confidence', 0)
+            
+            if confidence < 90:
+                return {
+                    'success': False,
+                    'error': f'Face detection confidence too low ({confidence:.1f}%). Please ensure good lighting and face the camera directly.'
+                }
+            
+            # Store the reference face
+            self.reference_face_image = face_image
+            self.face_registered = True
+            
+            # Get face bounding box info
+            bbox = face.get('BoundingBox', {})
+            
+            logger.info(f"Session {self.session_id}: Face registered successfully with {confidence:.1f}% confidence")
+            
+            return {
+                'success': True,
+                'message': 'Face registered successfully',
+                'face_confidence': confidence,
+                'face_bounding_box': bbox,
+                'verification_enabled': self.face_verification_enabled
+            }
+            
+        except Exception as e:
+            logger.error(f"Session {self.session_id}: Face registration failed: {e}")
+            return {
+                'success': False,
+                'error': f'Face registration failed: {str(e)}'
+            }
+    
+    def verify_face(self, frame_image: bytes) -> Dict:
+        """Compare current frame face with registered reference face"""
+        if not self.face_registered or not self.reference_face_image:
+            return {
+                'verified': None,
+                'message': 'No reference face registered',
+                'similarity': 0
+            }
+        
+        if not self.rekognition:
+            return {
+                'verified': None,
+                'message': 'AWS Rekognition not initialized',
+                'similarity': 0
+            }
+        
+        try:
+            # Compare faces using AWS Rekognition
+            compare_response = self.rekognition.compare_faces(
+                SourceImage={'Bytes': self.reference_face_image},
+                TargetImage={'Bytes': frame_image},
+                SimilarityThreshold=50.0  # Low threshold to get comparison even for different people
+            )
+            
+            face_matches = compare_response.get('FaceMatches', [])
+            unmatched_faces = compare_response.get('UnmatchedFaces', [])
+            
+            if face_matches:
+                # Face matched - get similarity score
+                best_match = max(face_matches, key=lambda x: x.get('Similarity', 0))
+                similarity = best_match.get('Similarity', 0)
+                
+                is_match = similarity >= self.face_similarity_threshold
+                
+                # Track match scores
+                self.face_match_scores.append(similarity)
+                
+                if is_match:
+                    self.face_mismatch_counter = 0  # Reset mismatch counter
+                else:
+                    self.face_mismatch_counter += 1
+                
+                result = {
+                    'verified': is_match,
+                    'similarity': round(similarity, 2),
+                    'message': 'Face verified' if is_match else f'Face similarity too low ({similarity:.1f}%)',
+                    'threshold': self.face_similarity_threshold
+                }
+                
+            elif unmatched_faces:
+                # Different person detected
+                self.face_mismatch_counter += 1
+                self.face_match_scores.append(0)
+                
+                result = {
+                    'verified': False,
+                    'similarity': 0,
+                    'message': 'Different person detected',
+                    'threshold': self.face_similarity_threshold
+                }
+            else:
+                # No face found in current frame
+                result = {
+                    'verified': None,
+                    'similarity': 0,
+                    'message': 'No face detected in current frame',
+                    'threshold': self.face_similarity_threshold
+                }
+            
+            # Store verification result
+            self.verification_results.append({
+                'timestamp': (datetime.now() - self.start_time).total_seconds(),
+                **result
+            })
+            
+            # Check if we need to generate an alert
+            if self.face_mismatch_counter >= self.face_mismatch_threshold:
+                self._add_alert('face_mismatch', f'Face verification failed {self.face_mismatch_counter} consecutive times')
+            
+            return result
+            
+        except self.rekognition.exceptions.InvalidParameterException as e:
+            # This usually means no face in one of the images
+            return {
+                'verified': None,
+                'similarity': 0,
+                'message': 'Could not compare faces - ensure face is visible',
+                'threshold': self.face_similarity_threshold
+            }
+        except Exception as e:
+            logger.error(f"Session {self.session_id}: Face verification error: {e}")
+            return {
+                'verified': None,
+                'similarity': 0,
+                'message': f'Verification error: {str(e)}',
+                'threshold': self.face_similarity_threshold
+            }
+    
+    def get_face_verification_summary(self) -> Dict:
+        """Get summary of face verification during the session"""
+        if not self.face_match_scores:
+            return {
+                'enabled': self.face_verification_enabled,
+                'registered': self.face_registered,
+                'total_verifications': 0,
+                'average_similarity': 0,
+                'verification_rate': 0,
+                'mismatches': 0
+            }
+        
+        successful_verifications = len([s for s in self.face_match_scores if s >= self.face_similarity_threshold])
+        
+        return {
+            'enabled': self.face_verification_enabled,
+            'registered': self.face_registered,
+            'total_verifications': len(self.face_match_scores),
+            'successful_verifications': successful_verifications,
+            'average_similarity': round(sum(self.face_match_scores) / len(self.face_match_scores), 2),
+            'max_similarity': round(max(self.face_match_scores), 2),
+            'min_similarity': round(min(self.face_match_scores), 2),
+            'verification_rate': round((successful_verifications / len(self.face_match_scores)) * 100, 1),
+            'total_mismatches': len([s for s in self.face_match_scores if s < self.face_similarity_threshold])
+        }
     
     def analyze_frame(self, frame_data: bytes) -> Dict:
         """Analyze a single frame and return real-time results"""
@@ -217,6 +411,17 @@ class LiveInterviewSession:
             analysis_result = self._process_frame_analysis(
                 face_response, label_response, text_response, timestamp
             )
+            
+            # Perform face verification if enabled and registered
+            if self.face_verification_enabled and self.face_registered:
+                verification_result = self.verify_face(frame_data)
+                analysis_result['face_verification'] = verification_result
+            else:
+                analysis_result['face_verification'] = {
+                    'verified': None,
+                    'message': 'Face not registered' if not self.face_registered else 'Verification disabled',
+                    'similarity': 0
+                }
             
             self.analyzed_frame_count += 1
             self.frame_analyses.append(analysis_result)
@@ -506,11 +711,14 @@ class LiveInterviewSession:
             'video_analysis_insights': video_insights,
             'emotion_timeline': self.emotion_history[-50:],  # Last 50 emotion readings
             'alert_history': self.alert_history,
+            'face_verification_summary': self.get_face_verification_summary(),
             'ai_summary': ai_summary,
             'token_consumption': self.token_tracker.get_summary(),
             'analysis_metadata': {
                 'llm_enhanced': self.llm_provider is not None,
-                'llm_provider': self.llm_provider
+                'llm_provider': self.llm_provider,
+                'face_verification_enabled': self.face_verification_enabled,
+                'face_registered': self.face_registered
             }
         }
     
@@ -955,13 +1163,80 @@ def api_start_session():
         'session_id': session_id,
         'status': 'active',
         'start_time': session.start_time.isoformat(),
+        'face_verification_required': True,
         'websocket_url': f'ws://{request.host}/socket.io/',
         'api_endpoints': {
+            'register_face': f'/api/sessions/{session_id}/register-face',
             'analyze_frame': f'/api/sessions/{session_id}/frame',
             'get_metrics': f'/api/sessions/{session_id}/metrics',
             'get_alerts': f'/api/sessions/{session_id}/alerts',
+            'get_verification_status': f'/api/sessions/{session_id}/verification-status',
             'end_session': f'/api/sessions/{session_id}/end'
         }
+    })
+
+
+@app.route('/api/sessions/<session_id>/register-face', methods=['POST'])
+def api_register_face(session_id):
+    """REST API to register candidate's face for verification"""
+    if session_id not in active_sessions:
+        return jsonify({'success': False, 'error': 'Invalid session'}), 404
+    
+    session = active_sessions[session_id]
+    
+    if not session.is_active:
+        return jsonify({'success': False, 'error': 'Session has ended'}), 400
+    
+    if session.face_registered:
+        return jsonify({
+            'success': False, 
+            'error': 'Face already registered for this session',
+            'face_registered': True
+        }), 400
+    
+    # Get face image from request
+    try:
+        if request.content_type and 'multipart/form-data' in request.content_type:
+            if 'face' not in request.files:
+                return jsonify({'success': False, 'error': 'No face image provided'}), 400
+            face_bytes = request.files['face'].read()
+        else:
+            data = request.get_json()
+            if not data or 'face' not in data:
+                return jsonify({'success': False, 'error': 'No face image data provided'}), 400
+            
+            face_data = data['face']
+            if ',' in face_data:
+                face_data = face_data.split(',')[1]
+            face_bytes = base64.b64decode(face_data)
+        
+        result = session.register_face(face_bytes)
+        
+        return jsonify(result)
+        
+    except Exception as e:
+        logger.error(f"Face registration error: {e}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
+@app.route('/api/sessions/<session_id>/verification-status', methods=['GET'])
+def api_get_verification_status(session_id):
+    """REST API to get face verification status"""
+    if session_id not in active_sessions:
+        return jsonify({'success': False, 'error': 'Invalid session'}), 404
+    
+    session = active_sessions[session_id]
+    
+    return jsonify({
+        'success': True,
+        'session_id': session_id,
+        'face_registered': session.face_registered,
+        'verification_enabled': session.face_verification_enabled,
+        'verification_summary': session.get_face_verification_summary(),
+        'recent_verifications': session.verification_results[-10:]  # Last 10 verification results
     })
 
 

@@ -365,13 +365,34 @@
                         <span id="connectionStatus" class="status-badge disconnected">
                             <span>●</span> Disconnected
                         </span>
+                        <span id="faceStatus" class="status-badge" style="display: none; background: var(--warning);">
+                            <span>👤</span> Face Not Registered
+                        </span>
                         <span id="recordingStatus" class="status-badge" style="display: none;">
                             <span>●</span> Recording
                         </span>
+                        <span id="verificationStatus" class="status-badge" style="display: none;">
+                            <span>✓</span> Verified
+                        </span>
+                    </div>
+                    <!-- Face capture overlay -->
+                    <div id="faceCaptureOverlay" style="display: none; position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.8); display: none; flex-direction: column; align-items: center; justify-content: center; z-index: 100;">
+                        <div style="text-align: center; padding: 30px;">
+                            <h2 style="color: white; margin-bottom: 15px;">📸 Face Registration Required</h2>
+                            <p style="color: #94a3b8; margin-bottom: 20px;">Position your face clearly in the frame and click "Capture Face"</p>
+                            <div style="width: 200px; height: 200px; border: 3px dashed var(--accent); border-radius: 50%; margin: 0 auto 20px;"></div>
+                            <button id="captureFaceBtn" class="btn btn-primary" onclick="captureFace()" style="font-size: 1.1rem; padding: 15px 30px;">
+                                📷 Capture Face
+                            </button>
+                            <p id="faceCaptureFeedback" style="color: var(--warning); margin-top: 15px; display: none;"></p>
+                        </div>
                     </div>
                 </div>
 
                 <div class="controls">
+                    <button id="registerFaceBtn" class="btn btn-secondary" onclick="showFaceRegistration()" style="display: none;">
+                        👤 Register Face
+                    </button>
                     <button id="startBtn" class="btn btn-primary" onclick="startSession()">
                         ▶ Start Session
                     </button>
@@ -471,6 +492,16 @@
                     </div>
                 </div>
 
+                <div class="card" id="verificationCard">
+                    <div class="card-title">🔐 Face Verification</div>
+                    <div style="text-align: center; padding: 10px;">
+                        <div id="verificationIcon" style="font-size: 2.5rem; margin-bottom: 10px;">👤</div>
+                        <div id="verificationText" style="color: var(--text-secondary); font-size: 0.9rem;">Face not registered</div>
+                        <div id="verificationScore" style="font-size: 1.5rem; font-weight: bold; color: var(--accent-light); margin-top: 10px; display: none;">--</div>
+                        <div id="verificationLabel" style="font-size: 0.75rem; color: var(--text-secondary); display: none;">Match Score</div>
+                    </div>
+                </div>
+
                 <div class="card">
                     <div class="card-title">⚠ Recent Alerts</div>
                     <div class="alerts-list" id="alertsList">
@@ -536,6 +567,9 @@
             return false;
         }
 
+        // Face registration state
+        let faceRegistered = false;
+        
         // Start session using REST API
         async function startSession() {
             const connected = await testConnection();
@@ -562,20 +596,138 @@
                 if (data.success) {
                     sessionId = data.session_id;
                     log('Session started: ' + sessionId, 'success');
-                    startCapturing();
                     
                     document.getElementById('startBtn').disabled = true;
                     document.getElementById('stopBtn').disabled = false;
-                    document.getElementById('recordingStatus').style.display = 'flex';
-                    document.getElementById('recordingStatus').classList.add('recording');
-
-                    sessionStartTime = Date.now();
-                    durationInterval = setInterval(updateDuration, 1000);
+                    
+                    // Show face registration requirement
+                    if (data.face_verification_required) {
+                        log('Face registration required before proceeding', 'info');
+                        showFaceRegistration();
+                    } else {
+                        beginInterviewCapture();
+                    }
                 } else {
                     log('Failed to start session: ' + data.error, 'error');
                 }
             } catch (error) {
                 log('Error starting session: ' + error.message, 'error');
+            }
+        }
+        
+        // Show face registration overlay
+        function showFaceRegistration() {
+            const overlay = document.getElementById('faceCaptureOverlay');
+            overlay.style.display = 'flex';
+            document.getElementById('faceStatus').style.display = 'flex';
+            document.getElementById('faceCaptureFeedback').style.display = 'none';
+            log('Please register your face to continue', 'info');
+        }
+        
+        // Capture face for registration
+        async function captureFace() {
+            if (!sessionId) {
+                log('No active session', 'error');
+                return;
+            }
+            
+            const feedback = document.getElementById('faceCaptureFeedback');
+            feedback.style.display = 'block';
+            feedback.style.color = 'var(--accent-light)';
+            feedback.textContent = 'Capturing face...';
+            
+            // Capture current frame
+            captureCanvas.width = videoElement.videoWidth;
+            captureCanvas.height = videoElement.videoHeight;
+            ctx.drawImage(videoElement, 0, 0);
+            const faceData = captureCanvas.toDataURL('image/jpeg', 0.9);
+            
+            try {
+                const response = await fetch(`${getApiUrl()}/api/sessions/${sessionId}/register-face`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ face: faceData })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    faceRegistered = true;
+                    feedback.style.color = 'var(--success)';
+                    feedback.textContent = '✓ Face registered successfully! Starting interview...';
+                    log('Face registered with ' + data.face_confidence.toFixed(1) + '% confidence', 'success');
+                    
+                    // Update UI
+                    document.getElementById('faceStatus').style.background = 'var(--success)';
+                    document.getElementById('faceStatus').innerHTML = '<span>✓</span> Face Registered';
+                    
+                    updateVerificationUI(true, data.face_confidence);
+                    
+                    // Hide overlay after short delay and start interview
+                    setTimeout(() => {
+                        document.getElementById('faceCaptureOverlay').style.display = 'none';
+                        beginInterviewCapture();
+                    }, 1500);
+                } else {
+                    feedback.style.color = 'var(--danger)';
+                    feedback.textContent = '✗ ' + data.error;
+                    log('Face registration failed: ' + data.error, 'error');
+                }
+            } catch (error) {
+                feedback.style.color = 'var(--danger)';
+                feedback.textContent = '✗ Network error: ' + error.message;
+                log('Face registration error: ' + error.message, 'error');
+            }
+        }
+        
+        // Begin actual interview capture after face registration
+        function beginInterviewCapture() {
+            startCapturing();
+            
+            document.getElementById('recordingStatus').style.display = 'flex';
+            document.getElementById('recordingStatus').classList.add('recording');
+            document.getElementById('verificationStatus').style.display = 'flex';
+
+            sessionStartTime = Date.now();
+            durationInterval = setInterval(updateDuration, 1000);
+            
+            log('Interview capture started', 'success');
+        }
+        
+        // Update face verification UI
+        function updateVerificationUI(verified, similarity) {
+            const icon = document.getElementById('verificationIcon');
+            const text = document.getElementById('verificationText');
+            const score = document.getElementById('verificationScore');
+            const label = document.getElementById('verificationLabel');
+            const status = document.getElementById('verificationStatus');
+            
+            if (verified === null) {
+                icon.textContent = '❓';
+                text.textContent = 'No face detected';
+                text.style.color = 'var(--warning)';
+                status.style.background = 'var(--warning)';
+                status.innerHTML = '<span>?</span> No Face';
+            } else if (verified) {
+                icon.textContent = '✅';
+                text.textContent = 'Identity Verified';
+                text.style.color = 'var(--success)';
+                score.style.display = 'block';
+                label.style.display = 'block';
+                score.textContent = similarity.toFixed(1) + '%';
+                score.style.color = 'var(--success)';
+                status.style.background = 'var(--success)';
+                status.innerHTML = '<span>✓</span> Verified ' + similarity.toFixed(0) + '%';
+            } else {
+                icon.textContent = '⚠️';
+                text.textContent = 'Face Mismatch Detected!';
+                text.style.color = 'var(--danger)';
+                score.style.display = 'block';
+                label.style.display = 'block';
+                score.textContent = similarity.toFixed(1) + '%';
+                score.style.color = 'var(--danger)';
+                status.style.background = 'var(--danger)';
+                status.innerHTML = '<span>✗</span> Mismatch ' + similarity.toFixed(0) + '%';
             }
         }
 
@@ -720,6 +872,17 @@
             // Update face status
             const faceStatus = result.face_count > 0 ? '✓' : '✗';
             document.getElementById('faceDetected').textContent = faceStatus;
+
+            // Update face verification status
+            if (result.face_verification) {
+                const fv = result.face_verification;
+                updateVerificationUI(fv.verified, fv.similarity || 0);
+                
+                // Log verification warnings
+                if (fv.verified === false) {
+                    log('⚠️ Face verification failed: ' + fv.message, 'error');
+                }
+            }
 
             // Update emotions
             if (result.emotions) {
@@ -881,6 +1044,7 @@
             const overallBehavior = report.overall_behavior_analysis || {};
             const insights = report.video_analysis_insights || {};
             const sessionSummary = report.session_summary || {};
+            const faceVerification = report.face_verification_summary || {};
             
             // Calculate overall average (use overall_behavior_analysis if available, else calculate)
             const overallAverage = overallBehavior.overallAveragePercentage || Math.round(
@@ -942,6 +1106,45 @@
                             <div style="font-size: 3.5rem; font-weight: bold; color: white;">${overallAverage}%</div>
                             <div style="color: rgba(255,255,255,0.9); font-size: 1.1rem;">Overall Performance Score</div>
                         </div>
+                        
+                        <!-- Face Verification Summary -->
+                        ${faceVerification.registered ? `
+                        <div style="
+                            background: ${faceVerification.verification_rate >= 90 ? 'rgba(16, 185, 129, 0.15)' : faceVerification.verification_rate >= 70 ? 'rgba(245, 158, 11, 0.15)' : 'rgba(239, 68, 68, 0.15)'};
+                            border-radius: 12px;
+                            padding: 15px 20px;
+                            margin-bottom: 25px;
+                            border-left: 4px solid ${faceVerification.verification_rate >= 90 ? '#10b981' : faceVerification.verification_rate >= 70 ? '#f59e0b' : '#ef4444'};
+                        ">
+                            <div style="display: flex; align-items: center; justify-content: space-between;">
+                                <div>
+                                    <h4 style="color: ${faceVerification.verification_rate >= 90 ? '#10b981' : faceVerification.verification_rate >= 70 ? '#f59e0b' : '#ef4444'}; margin: 0 0 8px 0;">
+                                        🔐 Face Verification ${faceVerification.verification_rate >= 90 ? 'Passed' : faceVerification.verification_rate >= 70 ? 'Warning' : 'Failed'}
+                                    </h4>
+                                    <p style="color: #94a3b8; margin: 0; font-size: 0.9rem;">
+                                        ${faceVerification.successful_verifications || 0} of ${faceVerification.total_verifications || 0} frames verified 
+                                        (${faceVerification.verification_rate || 0}% success rate)
+                                    </p>
+                                </div>
+                                <div style="text-align: right;">
+                                    <div style="font-size: 2rem; font-weight: bold; color: ${faceVerification.verification_rate >= 90 ? '#10b981' : faceVerification.verification_rate >= 70 ? '#f59e0b' : '#ef4444'};">
+                                        ${faceVerification.average_similarity || 0}%
+                                    </div>
+                                    <div style="font-size: 0.75rem; color: #94a3b8;">Avg Match Score</div>
+                                </div>
+                            </div>
+                            ${faceVerification.total_mismatches > 0 ? `
+                            <div style="margin-top: 10px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,0.1);">
+                                <span style="color: #ef4444; font-size: 0.85rem;">⚠️ ${faceVerification.total_mismatches} face mismatch(es) detected during session</span>
+                            </div>
+                            ` : ''}
+                        </div>
+                        ` : `
+                        <div style="background: rgba(107, 114, 128, 0.15); border-radius: 12px; padding: 15px 20px; margin-bottom: 25px; border-left: 4px solid #6b7280;">
+                            <h4 style="color: #6b7280; margin: 0;">🔐 Face Verification Not Enabled</h4>
+                            <p style="color: #94a3b8; margin: 5px 0 0 0; font-size: 0.9rem;">No face was registered for this session</p>
+                        </div>
+                        `}
                         
                         <!-- Metrics Grid -->
                         <div style="
