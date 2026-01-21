@@ -161,6 +161,13 @@ class LiveInterviewSession:
         self.face_similarity_threshold = 80.0  # Minimum similarity percentage to consider a match
         self.verification_results: List[Dict] = []  # Store all verification results
         
+        # Document verification
+        self.document_verified = False
+        self.document_type: str = None  # 'aadhaar', 'pan', 'passport', 'driving_license', 'other'
+        self.document_face_image: bytes = None  # Face extracted from document
+        self.document_verification_result: Dict = None
+        self.document_similarity_threshold = 80.0  # Minimum similarity for document match
+        
         # Initialize AWS client
         try:
             self.rekognition = boto3.client(
@@ -252,6 +259,182 @@ class LiveInterviewSession:
                 'success': False,
                 'error': f'Face registration failed: {str(e)}'
             }
+    
+    def verify_document(self, document_image: bytes, live_face_image: bytes, document_type: str = 'other') -> Dict:
+        """
+        Verify candidate's identity by comparing face from ID document with live face.
+        
+        Args:
+            document_image: Image of the ID document (Aadhaar, PAN, Passport, etc.)
+            live_face_image: Live captured face image of the candidate
+            document_type: Type of document ('aadhaar', 'pan', 'passport', 'driving_license', 'voter_id', 'other')
+        
+        Returns:
+            Dict with verification result
+        """
+        if not self.rekognition:
+            return {'success': False, 'error': 'AWS Rekognition not initialized'}
+        
+        try:
+            # Step 1: Detect face in the document
+            logger.info(f"Session {self.session_id}: Detecting face in {document_type} document...")
+            
+            doc_face_response = self.rekognition.detect_faces(
+                Image={'Bytes': document_image},
+                Attributes=['DEFAULT']
+            )
+            
+            doc_faces = doc_face_response.get('FaceDetails', [])
+            
+            if len(doc_faces) == 0:
+                return {
+                    'success': False,
+                    'verified': False,
+                    'error': 'No face detected in the document. Please upload a clear image of your ID with a visible photo.',
+                    'document_type': document_type
+                }
+            
+            # Get document face confidence
+            doc_face = doc_faces[0]
+            doc_face_confidence = doc_face.get('Confidence', 0)
+            doc_face_bbox = doc_face.get('BoundingBox', {})
+            
+            logger.info(f"Session {self.session_id}: Document face detected with {doc_face_confidence:.1f}% confidence")
+            
+            # Step 2: Detect face in the live image
+            live_face_response = self.rekognition.detect_faces(
+                Image={'Bytes': live_face_image},
+                Attributes=['DEFAULT']
+            )
+            
+            live_faces = live_face_response.get('FaceDetails', [])
+            
+            if len(live_faces) == 0:
+                return {
+                    'success': False,
+                    'verified': False,
+                    'error': 'No face detected in the live image. Please ensure your face is clearly visible.',
+                    'document_type': document_type
+                }
+            
+            if len(live_faces) > 1:
+                return {
+                    'success': False,
+                    'verified': False,
+                    'error': 'Multiple faces detected in live image. Please ensure only you are in the frame.',
+                    'document_type': document_type
+                }
+            
+            live_face = live_faces[0]
+            live_face_confidence = live_face.get('Confidence', 0)
+            
+            logger.info(f"Session {self.session_id}: Live face detected with {live_face_confidence:.1f}% confidence")
+            
+            # Step 3: Compare faces using AWS Rekognition
+            try:
+                compare_response = self.rekognition.compare_faces(
+                    SourceImage={'Bytes': document_image},
+                    TargetImage={'Bytes': live_face_image},
+                    SimilarityThreshold=50.0  # Low threshold to get comparison data
+                )
+                
+                face_matches = compare_response.get('FaceMatches', [])
+                unmatched_faces = compare_response.get('UnmatchedFaces', [])
+                
+                if face_matches:
+                    # Get the best match
+                    best_match = max(face_matches, key=lambda x: x.get('Similarity', 0))
+                    similarity = best_match.get('Similarity', 0)
+                    
+                    is_verified = similarity >= self.document_similarity_threshold
+                    
+                    # Store verification result
+                    self.document_verified = is_verified
+                    self.document_type = document_type
+                    self.document_face_image = document_image
+                    self.document_verification_result = {
+                        'verified': is_verified,
+                        'similarity': round(similarity, 2),
+                        'document_type': document_type,
+                        'timestamp': datetime.now().isoformat()
+                    }
+                    
+                    # Also register this as the reference face if verification passed
+                    if is_verified and not self.face_registered:
+                        self.reference_face_image = live_face_image
+                        self.face_registered = True
+                    
+                    logger.info(f"Session {self.session_id}: Document verification {'PASSED' if is_verified else 'FAILED'} with {similarity:.1f}% similarity")
+                    
+                    result = {
+                        'success': True,
+                        'verified': is_verified,
+                        'similarity': round(similarity, 2),
+                        'threshold': self.document_similarity_threshold,
+                        'document_type': document_type,
+                        'document_face_confidence': round(doc_face_confidence, 2),
+                        'live_face_confidence': round(live_face_confidence, 2),
+                        'message': 'Identity verified successfully! Document face matches live face.' if is_verified else f'Identity verification failed. Face similarity ({similarity:.1f}%) is below threshold ({self.document_similarity_threshold}%).',
+                        'face_registered': self.face_registered
+                    }
+                    
+                    if is_verified:
+                        result['next_step'] = 'You can now proceed with the interview.'
+                    else:
+                        result['next_step'] = 'Please try again with a clearer document or better lighting.'
+                    
+                    return result
+                    
+                else:
+                    # No match found
+                    self.document_verified = False
+                    self.document_verification_result = {
+                        'verified': False,
+                        'similarity': 0,
+                        'document_type': document_type,
+                        'timestamp': datetime.now().isoformat()
+                    }
+                    
+                    logger.warning(f"Session {self.session_id}: Document verification FAILED - faces do not match")
+                    
+                    return {
+                        'success': True,
+                        'verified': False,
+                        'similarity': 0,
+                        'threshold': self.document_similarity_threshold,
+                        'document_type': document_type,
+                        'document_face_confidence': round(doc_face_confidence, 2),
+                        'live_face_confidence': round(live_face_confidence, 2),
+                        'message': 'Identity verification failed. The face in the document does not match your live face.',
+                        'next_step': 'Please ensure you are using your own ID document and try again.'
+                    }
+                    
+            except self.rekognition.exceptions.InvalidParameterException as e:
+                logger.error(f"Session {self.session_id}: Face comparison failed: {e}")
+                return {
+                    'success': False,
+                    'verified': False,
+                    'error': 'Could not compare faces. Please ensure both images have clear, visible faces.',
+                    'document_type': document_type
+                }
+                
+        except Exception as e:
+            logger.error(f"Session {self.session_id}: Document verification error: {e}")
+            return {
+                'success': False,
+                'verified': False,
+                'error': f'Document verification failed: {str(e)}',
+                'document_type': document_type
+            }
+    
+    def get_document_verification_status(self) -> Dict:
+        """Get the current document verification status"""
+        return {
+            'document_verified': self.document_verified,
+            'document_type': self.document_type,
+            'verification_result': self.document_verification_result,
+            'face_registered': self.face_registered
+        }
     
     def verify_face(self, frame_image: bytes) -> Dict:
         """Compare current frame face with registered reference face"""
@@ -711,12 +894,14 @@ class LiveInterviewSession:
             'video_analysis_insights': video_insights,
             'emotion_timeline': self.emotion_history[-50:],  # Last 50 emotion readings
             'alert_history': self.alert_history,
+            'document_verification': self.get_document_verification_status(),
             'face_verification_summary': self.get_face_verification_summary(),
             'ai_summary': ai_summary,
             'token_consumption': self.token_tracker.get_summary(),
             'analysis_metadata': {
                 'llm_enhanced': self.llm_provider is not None,
                 'llm_provider': self.llm_provider,
+                'document_verified': self.document_verified,
                 'face_verification_enabled': self.face_verification_enabled,
                 'face_registered': self.face_registered
             }
@@ -1166,13 +1351,20 @@ def api_start_session():
         'face_verification_required': True,
         'websocket_url': f'ws://{request.host}/socket.io/',
         'api_endpoints': {
+            'verify_document': f'/api/sessions/{session_id}/verify-document',
             'register_face': f'/api/sessions/{session_id}/register-face',
             'analyze_frame': f'/api/sessions/{session_id}/frame',
             'get_metrics': f'/api/sessions/{session_id}/metrics',
             'get_alerts': f'/api/sessions/{session_id}/alerts',
+            'get_document_status': f'/api/sessions/{session_id}/document-status',
             'get_verification_status': f'/api/sessions/{session_id}/verification-status',
             'end_session': f'/api/sessions/{session_id}/end'
-        }
+        },
+        'verification_flow': [
+            '1. verify_document - Upload ID document and capture live face',
+            '2. register_face - Register face for continuous verification (auto if document verified)',
+            '3. analyze_frame - Start interview with frame analysis'
+        ]
     })
 
 
@@ -1220,6 +1412,79 @@ def api_register_face(session_id):
             'success': False,
             'error': str(e)
         }), 500
+
+
+@app.route('/api/sessions/<session_id>/verify-document', methods=['POST'])
+def api_verify_document(session_id):
+    """
+    REST API to verify candidate's identity using ID document.
+    Compares face from document (Aadhaar, PAN, Passport, etc.) with live face.
+    """
+    if session_id not in active_sessions:
+        return jsonify({'success': False, 'error': 'Invalid session'}), 404
+    
+    session = active_sessions[session_id]
+    
+    if not session.is_active:
+        return jsonify({'success': False, 'error': 'Session has ended'}), 400
+    
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({'success': False, 'error': 'No data provided'}), 400
+        
+        # Get document image
+        if 'document' not in data:
+            return jsonify({'success': False, 'error': 'No document image provided. Please upload your ID document.'}), 400
+        
+        # Get live face image
+        if 'live_face' not in data:
+            return jsonify({'success': False, 'error': 'No live face image provided. Please capture your face.'}), 400
+        
+        # Get document type (optional)
+        document_type = data.get('document_type', 'other')
+        valid_document_types = ['aadhaar', 'pan', 'passport', 'driving_license', 'voter_id', 'other']
+        if document_type not in valid_document_types:
+            document_type = 'other'
+        
+        # Decode document image
+        document_data = data['document']
+        if ',' in document_data:
+            document_data = document_data.split(',')[1]
+        document_bytes = base64.b64decode(document_data)
+        
+        # Decode live face image
+        live_face_data = data['live_face']
+        if ',' in live_face_data:
+            live_face_data = live_face_data.split(',')[1]
+        live_face_bytes = base64.b64decode(live_face_data)
+        
+        # Perform document verification
+        result = session.verify_document(document_bytes, live_face_bytes, document_type)
+        
+        return jsonify(result)
+        
+    except Exception as e:
+        logger.error(f"Document verification error: {e}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
+@app.route('/api/sessions/<session_id>/document-status', methods=['GET'])
+def api_get_document_status(session_id):
+    """REST API to get document verification status"""
+    if session_id not in active_sessions:
+        return jsonify({'success': False, 'error': 'Invalid session'}), 404
+    
+    session = active_sessions[session_id]
+    
+    return jsonify({
+        'success': True,
+        'session_id': session_id,
+        **session.get_document_verification_status()
+    })
 
 
 @app.route('/api/sessions/<session_id>/verification-status', methods=['GET'])

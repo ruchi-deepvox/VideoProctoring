@@ -9,15 +9,17 @@ Real-time AI-powered interview analysis with face verification, emotion tracking
 - [API Reference](#api-reference)
   - [Health Check](#1-health-check)
   - [Start Session](#2-start-session)
-  - [Register Face](#3-register-face)
-  - [Analyze Frame](#4-analyze-frame)
-  - [Get Live Metrics](#5-get-live-metrics)
-  - [Get Alerts](#6-get-alerts)
-  - [Get Face Verification Status](#7-get-face-verification-status)
-  - [End Session](#8-end-session--get-final-report)
-  - [List Sessions](#9-list-all-sessions)
-  - [Delete Session](#10-delete-session)
-  - [Pre-recorded Video Analysis](#11-pre-recorded-video-analysis)
+  - [Verify Document (ID Verification)](#3-verify-document-id-verification) ⭐ NEW
+  - [Get Document Status](#4-get-document-status)
+  - [Register Face](#5-register-face)
+  - [Analyze Frame](#6-analyze-frame)
+  - [Get Live Metrics](#7-get-live-metrics)
+  - [Get Alerts](#8-get-alerts)
+  - [Get Face Verification Status](#9-get-face-verification-status)
+  - [End Session](#10-end-session--get-final-report)
+  - [List Sessions](#11-list-all-sessions)
+  - [Delete Session](#12-delete-session)
+  - [Pre-recorded Video Analysis](#13-pre-recorded-video-analysis)
 - [Integration Flow](#integration-flow)
 - [JavaScript Integration](#javascript-integration)
 - [Alert Types](#alert-types)
@@ -44,7 +46,8 @@ This API provides real-time video analysis for interview proctoring, including:
 
 | Feature | Description |
 |---------|-------------|
-| 🔐 Face Verification | Verify candidate identity throughout the interview |
+| 🪪 **Document Verification** | Verify candidate identity against ID documents (Aadhaar, PAN, Passport, etc.) |
+| 🔐 Face Verification | Continuous face matching throughout the interview |
 | 😊 Emotion Analysis | Real-time emotion detection (happy, calm, confused, etc.) |
 | 👁️ Eye Contact Tracking | Monitor where the candidate is looking |
 | 🧍 Posture Analysis | Assess body language and posture |
@@ -56,15 +59,26 @@ This API provides real-time video analysis for interview proctoring, including:
 
 ## Quick Start
 
-### Typical API Flow:
+### Recommended API Flow (with Document Verification):
 
 ```
-1. POST /api/sessions/start           → Create session
-2. POST /api/sessions/{id}/register-face  → Register candidate face (REQUIRED)
-3. POST /api/sessions/{id}/frame      → Send frames (loop every 1 second)
-4. GET  /api/sessions/{id}/metrics    → Get live metrics (optional)
-5. POST /api/sessions/{id}/end        → End session & get report
+1. POST /api/sessions/start              → Create session
+2. POST /api/sessions/{id}/verify-document  → Verify ID document against live face ⭐ NEW
+3. POST /api/sessions/{id}/frame         → Send frames (loop every 1 second)
+4. GET  /api/sessions/{id}/metrics       → Get live metrics (optional)
+5. POST /api/sessions/{id}/end           → End session & get report
 ```
+
+### Alternative Flow (Face Registration Only):
+
+```
+1. POST /api/sessions/start              → Create session
+2. POST /api/sessions/{id}/register-face → Register candidate face
+3. POST /api/sessions/{id}/frame         → Send frames (loop every 1 second)
+4. POST /api/sessions/{id}/end           → End session & get report
+```
+
+> **Note:** Document verification automatically registers the face if successful, so you don't need to call register-face separately.
 
 ---
 
@@ -135,13 +149,20 @@ Content-Type: application/json
   "face_verification_required": true,
   "websocket_url": "ws://localhost:5001/socket.io/",
   "api_endpoints": {
+    "verify_document": "/api/sessions/8ab64dbf-839d-4d3d-91b2-7c99d746119d/verify-document",
     "register_face": "/api/sessions/8ab64dbf-839d-4d3d-91b2-7c99d746119d/register-face",
     "analyze_frame": "/api/sessions/8ab64dbf-839d-4d3d-91b2-7c99d746119d/frame",
     "get_metrics": "/api/sessions/8ab64dbf-839d-4d3d-91b2-7c99d746119d/metrics",
     "get_alerts": "/api/sessions/8ab64dbf-839d-4d3d-91b2-7c99d746119d/alerts",
+    "get_document_status": "/api/sessions/8ab64dbf-839d-4d3d-91b2-7c99d746119d/document-status",
     "get_verification_status": "/api/sessions/8ab64dbf-839d-4d3d-91b2-7c99d746119d/verification-status",
     "end_session": "/api/sessions/8ab64dbf-839d-4d3d-91b2-7c99d746119d/end"
-  }
+  },
+  "verification_flow": [
+    "1. verify_document - Upload ID document and capture live face",
+    "2. register_face - Register face for continuous verification (auto if document verified)",
+    "3. analyze_frame - Start interview with frame analysis"
+  ]
 }
 ```
 
@@ -154,7 +175,139 @@ curl -X POST https://fexo.deepvox.ai/api/sessions/start \
 
 ---
 
-### 3. Register Face
+### 3. Verify Document (ID Verification) ⭐ NEW
+
+**Verify candidate's identity by comparing face from ID document with live captured face.**
+
+Supported document types:
+- Aadhaar Card
+- PAN Card
+- Passport
+- Driving License
+- Voter ID
+- Other Government ID
+
+**Endpoint:** `POST /api/sessions/{session_id}/verify-document`
+
+**Headers:**
+```
+Content-Type: application/json
+```
+
+**Request Body:**
+```json
+{
+  "document": "data:image/jpeg;base64,/9j/4AAQ...",
+  "live_face": "data:image/jpeg;base64,/9j/4AAQ...",
+  "document_type": "aadhaar"
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `document` | string | Yes | Base64-encoded image of ID document |
+| `live_face` | string | Yes | Base64-encoded live face capture |
+| `document_type` | string | No | One of: `aadhaar`, `pan`, `passport`, `driving_license`, `voter_id`, `other` |
+
+**Success Response (Verified):**
+```json
+{
+  "success": true,
+  "verified": true,
+  "similarity": 94.5,
+  "threshold": 80.0,
+  "document_type": "aadhaar",
+  "document_face_confidence": 99.2,
+  "live_face_confidence": 99.8,
+  "message": "Identity verified successfully! Document face matches live face.",
+  "face_registered": true,
+  "next_step": "You can now proceed with the interview."
+}
+```
+
+**Success Response (Not Verified):**
+```json
+{
+  "success": true,
+  "verified": false,
+  "similarity": 45.2,
+  "threshold": 80.0,
+  "document_type": "aadhaar",
+  "document_face_confidence": 98.5,
+  "live_face_confidence": 99.1,
+  "message": "Identity verification failed. Face similarity (45.2%) is below threshold (80%).",
+  "next_step": "Please try again with a clearer document or better lighting."
+}
+```
+
+**Error Responses:**
+
+No face in document:
+```json
+{
+  "success": false,
+  "verified": false,
+  "error": "No face detected in the document. Please upload a clear image of your ID with a visible photo.",
+  "document_type": "aadhaar"
+}
+```
+
+Multiple faces in live image:
+```json
+{
+  "success": false,
+  "verified": false,
+  "error": "Multiple faces detected in live image. Please ensure only you are in the frame.",
+  "document_type": "aadhaar"
+}
+```
+
+**cURL:**
+```bash
+curl -X POST https://fexo.deepvox.ai/api/sessions/{session_id}/verify-document \
+  -H "Content-Type: application/json" \
+  -d '{
+    "document": "data:image/jpeg;base64,/9j/4AAQ...",
+    "live_face": "data:image/jpeg;base64,/9j/4AAQ...",
+    "document_type": "aadhaar"
+  }'
+```
+
+> **Note:** If document verification succeeds, the live face is automatically registered for continuous verification during the interview. You don't need to call `/register-face` separately.
+
+---
+
+### 4. Get Document Status
+
+Get the current document verification status for a session.
+
+**Endpoint:** `GET /api/sessions/{session_id}/document-status`
+
+**Response:**
+```json
+{
+  "success": true,
+  "session_id": "8ab64dbf-839d-4d3d-91b2-7c99d746119d",
+  "document_verified": true,
+  "document_type": "aadhaar",
+  "verification_result": {
+    "verified": true,
+    "similarity": 94.5,
+    "document_type": "aadhaar",
+    "timestamp": "2026-01-21T10:00:30.000000"
+  },
+  "face_registered": true
+}
+```
+
+**cURL:**
+```bash
+curl https://fexo.deepvox.ai/api/sessions/{session_id}/document-status
+```
+
+---
+
+### 5. Register Face (Alternative to Document Verification)
 
 **⚠️ REQUIRED** - Register candidate's face before starting frame analysis. This enables identity verification throughout the interview.
 
@@ -234,7 +387,7 @@ curl -X POST https://fexo.deepvox.ai/api/sessions/{session_id}/register-face \
 
 ---
 
-### 4. Analyze Frame
+### 6. Analyze Frame
 
 Send a video frame for real-time analysis. Call this endpoint every 1-2 seconds during the interview.
 
@@ -340,7 +493,7 @@ curl -X POST https://fexo.deepvox.ai/api/sessions/{session_id}/frame \
 
 ---
 
-### 5. Get Live Metrics
+### 7. Get Live Metrics
 
 Get aggregated metrics for the current session.
 
@@ -383,7 +536,7 @@ curl https://fexo.deepvox.ai/api/sessions/{session_id}/metrics
 
 ---
 
-### 6. Get Alerts
+### 8. Get Alerts
 
 Get all alerts generated during the session.
 
@@ -439,7 +592,7 @@ curl https://fexo.deepvox.ai/api/sessions/{session_id}/alerts
 
 ---
 
-### 7. Get Face Verification Status
+### 9. Get Face Verification Status
 
 Get detailed face verification statistics.
 
@@ -496,7 +649,7 @@ curl https://fexo.deepvox.ai/api/sessions/{session_id}/verification-status
 
 ---
 
-### 8. End Session & Get Final Report
+### 10. End Session & Get Final Report
 
 End the interview session and receive a comprehensive analysis report.
 
@@ -631,7 +784,7 @@ curl -X POST https://fexo.deepvox.ai/api/sessions/{session_id}/end
 
 ---
 
-### 9. List All Sessions
+### 11. List All Sessions
 
 Get a list of all active and ended sessions.
 
@@ -668,7 +821,7 @@ curl https://fexo.deepvox.ai/api/sessions
 
 ---
 
-### 10. Delete Session
+### 12. Delete Session
 
 Delete a session and its data.
 
@@ -689,7 +842,7 @@ curl -X DELETE https://fexo.deepvox.ai/api/sessions/{session_id}
 
 ---
 
-### 11. Pre-recorded Video Analysis
+### 13. Pre-recorded Video Analysis
 
 Analyze a pre-recorded video file (for legacy UI compatibility).
 

@@ -375,8 +375,62 @@
                             <span>✓</span> Verified
                         </span>
                     </div>
+                    <!-- Document verification overlay -->
+                    <div id="documentVerifyOverlay" style="display: none; position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.9); flex-direction: column; align-items: center; justify-content: center; z-index: 101; overflow-y: auto;">
+                        <div style="text-align: center; padding: 30px; max-width: 500px;">
+                            <h2 style="color: white; margin-bottom: 10px;">🪪 Identity Verification</h2>
+                            <p style="color: #94a3b8; margin-bottom: 25px;">Upload your ID document and capture your face to verify your identity</p>
+                            
+                            <!-- Step 1: Upload Document -->
+                            <div id="docStep1" style="background: var(--bg-card); border-radius: 12px; padding: 20px; margin-bottom: 15px; border: 2px solid var(--accent);">
+                                <h3 style="color: var(--accent-light); margin-bottom: 10px;">Step 1: Upload ID Document</h3>
+                                <p style="color: #94a3b8; font-size: 0.85rem; margin-bottom: 15px;">Aadhaar, PAN Card, Passport, Driving License, or Voter ID</p>
+                                <select id="documentType" style="width: 100%; padding: 10px; margin-bottom: 15px; border-radius: 8px; background: var(--bg-secondary); color: white; border: 1px solid var(--border);">
+                                    <option value="aadhaar">Aadhaar Card</option>
+                                    <option value="pan">PAN Card</option>
+                                    <option value="passport">Passport</option>
+                                    <option value="driving_license">Driving License</option>
+                                    <option value="voter_id">Voter ID</option>
+                                    <option value="other">Other ID</option>
+                                </select>
+                                <input type="file" id="documentInput" accept="image/*" style="display: none;" onchange="handleDocumentUpload(event)">
+                                <button class="btn btn-primary" onclick="document.getElementById('documentInput').click()" style="width: 100%;">
+                                    📄 Upload Document Photo
+                                </button>
+                                <div id="documentPreview" style="margin-top: 15px; display: none;">
+                                    <img id="documentImage" style="max-width: 100%; max-height: 150px; border-radius: 8px; border: 2px solid var(--success);">
+                                    <p style="color: var(--success); margin-top: 5px;">✓ Document uploaded</p>
+                                </div>
+                            </div>
+                            
+                            <!-- Step 2: Capture Face -->
+                            <div id="docStep2" style="background: var(--bg-card); border-radius: 12px; padding: 20px; margin-bottom: 15px; border: 2px solid var(--border); opacity: 0.5;">
+                                <h3 style="color: var(--accent-light); margin-bottom: 10px;">Step 2: Capture Your Face</h3>
+                                <p style="color: #94a3b8; font-size: 0.85rem; margin-bottom: 15px;">Position your face clearly and click capture</p>
+                                <button id="captureForDocBtn" class="btn btn-primary" onclick="captureForDocVerify()" style="width: 100%;" disabled>
+                                    📷 Capture Face
+                                </button>
+                                <div id="liveFacePreview" style="margin-top: 15px; display: none;">
+                                    <img id="liveFaceImage" style="max-width: 100%; max-height: 150px; border-radius: 8px; border: 2px solid var(--success);">
+                                    <p style="color: var(--success); margin-top: 5px;">✓ Face captured</p>
+                                </div>
+                            </div>
+                            
+                            <!-- Verify Button -->
+                            <button id="verifyDocBtn" class="btn btn-primary" onclick="verifyDocument()" style="width: 100%; padding: 15px; font-size: 1.1rem; margin-bottom: 15px;" disabled>
+                                🔐 Verify Identity
+                            </button>
+                            
+                            <p id="docVerifyFeedback" style="color: var(--warning); margin-top: 10px; display: none;"></p>
+                            
+                            <button class="btn btn-secondary" onclick="skipDocumentVerification()" style="margin-top: 10px; font-size: 0.85rem;">
+                                Skip (Not Recommended)
+                            </button>
+                        </div>
+                    </div>
+                    
                     <!-- Face capture overlay -->
-                    <div id="faceCaptureOverlay" style="display: none; position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.8); display: none; flex-direction: column; align-items: center; justify-content: center; z-index: 100;">
+                    <div id="faceCaptureOverlay" style="display: none; position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.8); flex-direction: column; align-items: center; justify-content: center; z-index: 100;">
                         <div style="text-align: center; padding: 30px;">
                             <h2 style="color: white; margin-bottom: 15px;">📸 Face Registration Required</h2>
                             <p style="color: #94a3b8; margin-bottom: 20px;">Position your face clearly in the frame and click "Capture Face"</p>
@@ -569,6 +623,144 @@
 
         // Face registration state
         let faceRegistered = false;
+        let documentVerified = false;
+        let uploadedDocumentData = null;
+        let capturedLiveFaceData = null;
+        
+        // Handle document upload
+        function handleDocumentUpload(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                uploadedDocumentData = e.target.result;
+                document.getElementById('documentImage').src = uploadedDocumentData;
+                document.getElementById('documentPreview').style.display = 'block';
+                
+                // Enable step 2
+                document.getElementById('docStep2').style.opacity = '1';
+                document.getElementById('docStep2').style.borderColor = 'var(--accent)';
+                document.getElementById('captureForDocBtn').disabled = false;
+                
+                log('Document uploaded successfully', 'success');
+                checkDocVerifyReady();
+            };
+            reader.readAsDataURL(file);
+        }
+        
+        // Capture face for document verification
+        function captureForDocVerify() {
+            captureCanvas.width = videoElement.videoWidth;
+            captureCanvas.height = videoElement.videoHeight;
+            ctx.drawImage(videoElement, 0, 0);
+            capturedLiveFaceData = captureCanvas.toDataURL('image/jpeg', 0.9);
+            
+            document.getElementById('liveFaceImage').src = capturedLiveFaceData;
+            document.getElementById('liveFacePreview').style.display = 'block';
+            
+            log('Live face captured', 'success');
+            checkDocVerifyReady();
+        }
+        
+        // Check if ready to verify
+        function checkDocVerifyReady() {
+            const ready = uploadedDocumentData && capturedLiveFaceData;
+            document.getElementById('verifyDocBtn').disabled = !ready;
+        }
+        
+        // Verify document against live face
+        async function verifyDocument() {
+            if (!uploadedDocumentData || !capturedLiveFaceData) {
+                log('Please upload document and capture face first', 'error');
+                return;
+            }
+            
+            const feedback = document.getElementById('docVerifyFeedback');
+            feedback.style.display = 'block';
+            feedback.style.color = 'var(--accent-light)';
+            feedback.textContent = '🔄 Verifying identity... Please wait...';
+            
+            document.getElementById('verifyDocBtn').disabled = true;
+            
+            try {
+                const documentType = document.getElementById('documentType').value;
+                
+                const response = await fetch(`${getApiUrl()}/api/sessions/${sessionId}/verify-document`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        document: uploadedDocumentData,
+                        live_face: capturedLiveFaceData,
+                        document_type: documentType
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.verified) {
+                    documentVerified = true;
+                    faceRegistered = data.face_registered;
+                    
+                    feedback.style.color = 'var(--success)';
+                    feedback.innerHTML = `✅ Identity Verified!<br>
+                        <span style="font-size: 0.9rem;">Similarity: ${data.similarity}% | Document: ${documentType.toUpperCase()}</span>`;
+                    
+                    log(`Document verified: ${data.similarity}% match`, 'success');
+                    
+                    // Update UI status
+                    document.getElementById('faceStatus').style.background = 'var(--success)';
+                    document.getElementById('faceStatus').innerHTML = '<span>✓</span> Identity Verified';
+                    document.getElementById('faceStatus').style.display = 'flex';
+                    
+                    // Hide overlay and start interview after delay
+                    setTimeout(() => {
+                        document.getElementById('documentVerifyOverlay').style.display = 'none';
+                        beginInterviewCapture();
+                    }, 2000);
+                    
+                } else {
+                    feedback.style.color = 'var(--danger)';
+                    feedback.innerHTML = `❌ Verification Failed<br>
+                        <span style="font-size: 0.9rem;">${data.message || 'Face does not match document'}</span><br>
+                        <span style="font-size: 0.85rem; color: #94a3b8;">${data.next_step || 'Please try again'}</span>`;
+                    
+                    log('Document verification failed: ' + (data.message || 'Face mismatch'), 'error');
+                    document.getElementById('verifyDocBtn').disabled = false;
+                }
+                
+            } catch (error) {
+                feedback.style.color = 'var(--danger)';
+                feedback.textContent = '❌ Error: ' + error.message;
+                log('Document verification error: ' + error.message, 'error');
+                document.getElementById('verifyDocBtn').disabled = false;
+            }
+        }
+        
+        // Skip document verification (not recommended)
+        function skipDocumentVerification() {
+            if (confirm('⚠️ Skipping document verification is not recommended.\n\nThe candidate identity will not be verified against their ID.\n\nAre you sure you want to continue?')) {
+                log('Document verification skipped', 'warning');
+                document.getElementById('documentVerifyOverlay').style.display = 'none';
+                showFaceRegistration();
+            }
+        }
+        
+        // Show document verification
+        function showDocumentVerification() {
+            document.getElementById('documentVerifyOverlay').style.display = 'flex';
+            // Reset state
+            uploadedDocumentData = null;
+            capturedLiveFaceData = null;
+            document.getElementById('documentPreview').style.display = 'none';
+            document.getElementById('liveFacePreview').style.display = 'none';
+            document.getElementById('docStep2').style.opacity = '0.5';
+            document.getElementById('docStep2').style.borderColor = 'var(--border)';
+            document.getElementById('captureForDocBtn').disabled = true;
+            document.getElementById('verifyDocBtn').disabled = true;
+            document.getElementById('docVerifyFeedback').style.display = 'none';
+            log('Please verify your identity with an ID document', 'info');
+        }
         
         // Start session using REST API
         async function startSession() {
@@ -600,10 +792,10 @@
                     document.getElementById('startBtn').disabled = true;
                     document.getElementById('stopBtn').disabled = false;
                     
-                    // Show face registration requirement
+                    // Show document verification first (recommended flow)
                     if (data.face_verification_required) {
-                        log('Face registration required before proceeding', 'info');
-                        showFaceRegistration();
+                        log('Identity verification required before proceeding', 'info');
+                        showDocumentVerification();
                     } else {
                         beginInterviewCapture();
                     }
@@ -1045,6 +1237,7 @@
             const insights = report.video_analysis_insights || {};
             const sessionSummary = report.session_summary || {};
             const faceVerification = report.face_verification_summary || {};
+            const documentVerification = report.document_verification || {};
             
             // Calculate overall average (use overall_behavior_analysis if available, else calculate)
             const overallAverage = overallBehavior.overallAveragePercentage || Math.round(
@@ -1106,6 +1299,42 @@
                             <div style="font-size: 3.5rem; font-weight: bold; color: white;">${overallAverage}%</div>
                             <div style="color: rgba(255,255,255,0.9); font-size: 1.1rem;">Overall Performance Score</div>
                         </div>
+                        
+                        <!-- Document Verification -->
+                        ${documentVerification.document_verified ? `
+                        <div style="
+                            background: rgba(16, 185, 129, 0.15);
+                            border-radius: 12px;
+                            padding: 15px 20px;
+                            margin-bottom: 15px;
+                            border-left: 4px solid #10b981;
+                        ">
+                            <div style="display: flex; align-items: center; justify-content: space-between;">
+                                <div>
+                                    <h4 style="color: #10b981; margin: 0 0 5px 0;">🪪 Document Verification Passed</h4>
+                                    <p style="color: #94a3b8; margin: 0; font-size: 0.85rem;">
+                                        Document Type: ${(documentVerification.document_type || 'ID').toUpperCase()}
+                                    </p>
+                                </div>
+                                <div style="text-align: right;">
+                                    <div style="font-size: 1.5rem; font-weight: bold; color: #10b981;">
+                                        ${documentVerification.verification_result?.similarity || '--'}%
+                                    </div>
+                                    <div style="font-size: 0.7rem; color: #94a3b8;">Match Score</div>
+                                </div>
+                            </div>
+                        </div>
+                        ` : documentVerification.document_type ? `
+                        <div style="background: rgba(239, 68, 68, 0.15); border-radius: 12px; padding: 15px 20px; margin-bottom: 15px; border-left: 4px solid #ef4444;">
+                            <h4 style="color: #ef4444; margin: 0 0 5px 0;">🪪 Document Verification Failed</h4>
+                            <p style="color: #94a3b8; margin: 0; font-size: 0.85rem;">Identity could not be verified with the provided document</p>
+                        </div>
+                        ` : `
+                        <div style="background: rgba(107, 114, 128, 0.15); border-radius: 12px; padding: 15px 20px; margin-bottom: 15px; border-left: 4px solid #6b7280;">
+                            <h4 style="color: #6b7280; margin: 0;">🪪 Document Verification Skipped</h4>
+                            <p style="color: #94a3b8; margin: 5px 0 0 0; font-size: 0.85rem;">No ID document was verified for this session</p>
+                        </div>
+                        `}
                         
                         <!-- Face Verification Summary -->
                         ${faceVerification.registered ? `
