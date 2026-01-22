@@ -7,7 +7,7 @@ import cv2
 import numpy as np
 import base64
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 import time
 import logging
 from typing import Dict, List, Any, Optional
@@ -860,52 +860,284 @@ class LiveInterviewSession:
         return self.generate_final_report()
     
     def generate_final_report(self) -> Dict:
-        """Generate comprehensive final report"""
+        """Generate comprehensive final report in the required UI format"""
         duration = (self.end_time or datetime.now()) - self.start_time
         
         # Calculate behavioral metrics
-        behavioral_analysis = self._calculate_behavioral_metrics()
+        behavioral_metrics = self._calculate_behavioral_metrics()
         body_language_analysis = self._analyze_body_language()
         cultural_fit_analysis = self._analyze_cultural_fit()
-        overall_behavior_analysis = self._calculate_overall_behavior(behavioral_analysis)
-        video_insights = self._generate_video_insights(behavioral_analysis, body_language_analysis)
+        video_insights = self._generate_video_insights(behavioral_metrics, body_language_analysis)
         
         # Generate LLM-enhanced summary if available
-        ai_summary = self._generate_ai_summary(behavioral_analysis, body_language_analysis)
+        ai_summary = self._generate_ai_summary(behavioral_metrics, body_language_analysis)
         
+        # Calculate performance scores
+        behavior_avg = round((behavioral_metrics['confidence'] + behavioral_metrics['engagement'] + 
+                             behavioral_metrics['eye_contact'] + behavioral_metrics['posture'] + 
+                             behavioral_metrics['gestures'] + behavioral_metrics['voice_tone']) / 6)
+        
+        body_language_avg = body_language_analysis.get('overall_score', 80)
+        cultural_fit_avg = cultural_fit_analysis.get('overall_score', 85)
+        
+        # Build the response in required format
         return {
+            'status': 'success',
             'session_id': self.session_id,
-            'session_summary': {
+            
+            # Behavioral Analysis (required format)
+            'behavioral_analysis': {
+                'confidence': behavioral_metrics['confidence'],
+                'engagement': behavioral_metrics['engagement'],
+                'eye_contact': behavioral_metrics['eye_contact'],
+                'facial_expressions': behavioral_metrics['facial_expressions'],
+                'gestures': behavioral_metrics['gestures'],
+                'posture': behavioral_metrics['posture'],
+                'voice_tone': behavioral_metrics['voice_tone']
+            },
+            
+            # Performance Breakdown (required format)
+            'performanceBreakdown': {
+                'behavior': {
+                    'overallAveragePercentage': behavior_avg,
+                    'summary': self._get_performance_summary('behavior', behavior_avg)
+                },
+                'body_language': {
+                    'overallAveragePercentage': body_language_avg,
+                    'summary': self._get_performance_summary('body_language', body_language_avg)
+                },
+                'communicationSkills': {
+                    'answeredAveragePercentage': round((behavioral_metrics['engagement'] + behavioral_metrics['facial_expressions']) / 2),
+                    'overallAveragePercentage': round((behavioral_metrics['engagement'] + behavioral_metrics['facial_expressions']) / 2),
+                    'summary': self._get_performance_summary('communication', round((behavioral_metrics['engagement'] + behavioral_metrics['facial_expressions']) / 2))
+                },
+                'confidenceLevel': {
+                    'answeredAveragePercentage': behavioral_metrics['confidence'],
+                    'overallAveragePercentage': behavioral_metrics['confidence'],
+                    'summary': self._get_performance_summary('confidence', behavioral_metrics['confidence'])
+                },
+                'culturalFit': {
+                    'overallAveragePercentage': cultural_fit_avg,
+                    'summary': self._get_performance_summary('cultural_fit', cultural_fit_avg)
+                },
+                'leadershipPotential': {
+                    'answeredAveragePercentage': round(behavioral_metrics['confidence'] * 0.7),
+                    'overallAveragePercentage': round(behavioral_metrics['confidence'] * 0.7),
+                    'summary': self._get_performance_summary('leadership', round(behavioral_metrics['confidence'] * 0.7))
+                },
+                'problemSolving': {
+                    'answeredAveragePercentage': round((behavioral_metrics['engagement'] + behavioral_metrics['eye_contact']) / 2 * 0.8),
+                    'overallAveragePercentage': round((behavioral_metrics['engagement'] + behavioral_metrics['eye_contact']) / 2 * 0.8),
+                    'summary': self._get_performance_summary('problem_solving', round((behavioral_metrics['engagement'] + behavioral_metrics['eye_contact']) / 2 * 0.8))
+                },
+                'technicalKnowledge': {
+                    'answeredAveragePercentage': round(behavioral_metrics['engagement'] * 0.6),
+                    'overallAveragePercentage': round(behavioral_metrics['engagement'] * 0.6),
+                    'summary': self._get_performance_summary('technical', round(behavioral_metrics['engagement'] * 0.6))
+                }
+            },
+            
+            # Quick Stats (required format)
+            'quickStats': {
+                'communicationSkills': self._get_level_label(round((behavioral_metrics['engagement'] + behavioral_metrics['facial_expressions']) / 2)),
+                'confidenceLevel': self._get_level_label(behavioral_metrics['confidence']),
+                'leadershipPotential': self._get_level_label(round(behavioral_metrics['confidence'] * 0.7)),
+                'problemSolving': self._get_level_label(round((behavioral_metrics['engagement'] + behavioral_metrics['eye_contact']) / 2 * 0.8)),
+                'technicalKnowledge': self._get_level_label(round(behavioral_metrics['engagement'] * 0.6))
+            },
+            
+            # AI Evaluation Summary (required format)
+            'aiEvaluationSummary': self._generate_ai_evaluation_summary(behavioral_metrics, body_language_analysis, ai_summary),
+            
+            # Video Analysis Insights (required format)
+            'video_analysis_insights': {
+                'keyStrengths': video_insights.get('strengths', []),
+                'areasOfGrowth': video_insights.get('areas_for_improvement', []),
+                'positive_indicators': video_insights.get('positive_indicators', []),
+                'areas_for_improvement': video_insights.get('areas_for_improvement', []),
+                'recommendations': video_insights.get('recommendations', [])
+            },
+            
+            # Recommendations (required format)
+            'recommendations': self._generate_final_recommendation(behavior_avg, body_language_avg, cultural_fit_avg),
+            
+            # Additional data for reference
+            'session_metadata': {
                 'start_time': self.start_time.isoformat(),
                 'end_time': (self.end_time or datetime.now()).isoformat(),
                 'duration_seconds': duration.total_seconds(),
-                'total_frames_received': self.frame_count,
-                'frames_analyzed': self.analyzed_frame_count,
-                'total_alerts': len(self.alert_history)
+                'total_frames_analyzed': self.analyzed_frame_count,
+                'total_alerts': len(self.alert_history),
+                'document_verified': self.document_verified,
+                'face_registered': self.face_registered
             },
-            'behavioral_analysis': behavioral_analysis,
-            'body_language_analysis': {
-                'summary': self._get_body_language_summary(body_language_analysis.get('overall_score', 70)),
-                'overallAveragePercentage': body_language_analysis.get('overall_score', 70),
-                'detailed_scores': body_language_analysis.get('scores', {})
-            },
-            'cultural_fit_analysis': cultural_fit_analysis,
-            'overall_behavior_analysis': overall_behavior_analysis,
-            'video_analysis_insights': video_insights,
-            'emotion_timeline': self.emotion_history[-50:],  # Last 50 emotion readings
-            'alert_history': self.alert_history,
             'document_verification': self.get_document_verification_status(),
             'face_verification_summary': self.get_face_verification_summary(),
-            'ai_summary': ai_summary,
-            'token_consumption': self.token_tracker.get_summary(),
-            'analysis_metadata': {
-                'llm_enhanced': self.llm_provider is not None,
-                'llm_provider': self.llm_provider,
-                'document_verified': self.document_verified,
-                'face_verification_enabled': self.face_verification_enabled,
-                'face_registered': self.face_registered
+            'emotion_summary': behavioral_metrics.get('emotion_summary', {}),
+            'alert_history': self.alert_history,
+            'token_consumption': self.token_tracker.get_summary()
+        }
+    
+    def _get_level_label(self, score: int) -> str:
+        """Convert numeric score to text label"""
+        if score >= 90:
+            return "Excellent"
+        elif score >= 75:
+            return "Good"
+        elif score >= 60:
+            return "Fair"
+        elif score >= 40:
+            return "Needs Improvement"
+        else:
+            return "Poor"
+    
+    def _get_performance_summary(self, category: str, score: int) -> str:
+        """Generate summary text for each performance category"""
+        summaries = {
+            'behavior': {
+                90: "Outstanding interview performance with exceptional behavioral presence and communication.",
+                75: "Strong interview performance with excellent behavioral presence and communication.",
+                60: "Good interview performance with adequate behavioral presence.",
+                40: "Fair interview performance with room for improvement in behavioral aspects.",
+                0: "Interview performance needs significant improvement in behavioral areas."
+            },
+            'body_language': {
+                90: "Excellent body language with confident posture and natural gestures.",
+                75: "Good body language with appropriate posture and gestures, showing professional presence.",
+                60: "Adequate body language, though some nervousness may be apparent.",
+                40: "Body language shows signs of nervousness or discomfort.",
+                0: "Body language needs significant improvement for professional settings."
+            },
+            'communication': {
+                90: "Excellent communication skills with clear and engaging delivery.",
+                75: "Good communication skills demonstrating clarity and engagement.",
+                60: "The candidate demonstrates a fair understanding of communication in a technical context.",
+                40: "Communication skills need improvement for clearer expression.",
+                0: "Communication skills require significant development."
+            },
+            'confidence': {
+                90: "The candidate's confidence appears excellent based on behavioral analysis.",
+                75: "Good confidence level demonstrated throughout the interview.",
+                60: "Moderate confidence level with some hesitation observed.",
+                40: "Confidence level needs improvement.",
+                0: "Low confidence observed, may benefit from interview practice."
+            },
+            'cultural_fit': {
+                90: "Excellent cultural fit with professional attire and presentation.",
+                75: "Good cultural fit with appropriate professional demeanor.",
+                60: "Adequate cultural fit with room for improvement.",
+                40: "Some concerns about cultural fit observed.",
+                0: "Cultural fit assessment indicates potential challenges."
+            },
+            'leadership': {
+                90: "Strong leadership potential demonstrated through confident presence.",
+                75: "Good leadership qualities observed in communication style.",
+                60: "Some leadership potential evident, could be developed further.",
+                40: "Leadership qualities were not strongly demonstrated.",
+                0: "No leadership questions were answered adequately."
+            },
+            'problem_solving': {
+                90: "Excellent analytical approach and problem-solving methodology.",
+                75: "Good problem-solving skills with structured thinking.",
+                60: "Adequate problem-solving approach demonstrated.",
+                40: "Problem-solving skills need further development.",
+                0: "The candidate has a poor approach to problem-solving."
+            },
+            'technical': {
+                90: "Excellent technical knowledge demonstrated.",
+                75: "Good level of technical knowledge shown.",
+                60: "Fair technical knowledge with room for deeper understanding.",
+                40: "Technical knowledge needs strengthening.",
+                0: "The candidate shows a poor level of technical knowledge but may need deeper explanations."
             }
         }
+        
+        category_summaries = summaries.get(category, summaries['behavior'])
+        
+        for threshold in sorted(category_summaries.keys(), reverse=True):
+            if score >= threshold:
+                return category_summaries[threshold]
+        
+        return category_summaries[0]
+    
+    def _generate_ai_evaluation_summary(self, behavioral: Dict, body_language: Dict, ai_summary: str) -> Dict:
+        """Generate AI evaluation summary in required format"""
+        avg_score = (behavioral['confidence'] + behavioral['engagement'] + behavioral['eye_contact']) / 3
+        
+        # Generate key strengths based on high scores
+        key_strengths = []
+        if behavioral['confidence'] >= 80:
+            key_strengths.append("You demonstrate strong self-assurance and confidence throughout the interview, which creates a positive impression.")
+        if behavioral['eye_contact'] >= 80:
+            key_strengths.append("Excellent eye contact maintained consistently, showing engagement and building rapport effectively.")
+        if behavioral['engagement'] >= 80:
+            key_strengths.append("You have a strong passion for continuous learning, as shown by your active engagement and attentiveness.")
+        if behavioral['posture'] >= 80:
+            key_strengths.append("Professional posture maintained throughout, projecting confidence and readiness.")
+        if behavioral['gestures'] >= 75:
+            key_strengths.append("Natural use of gestures complements your verbal communication effectively.")
+        
+        if not key_strengths:
+            key_strengths.append("Shows willingness to participate and engage in the interview process.")
+            key_strengths.append("Demonstrates basic understanding of fundamental concepts.")
+        
+        # Generate areas of growth based on lower scores
+        areas_of_growth = []
+        if behavioral['facial_expressions'] < 70:
+            areas_of_growth.append("Practice using more varied facial expressions to convey enthusiasm and engagement during responses.")
+        if behavioral['confidence'] < 70:
+            areas_of_growth.append("Work on building confidence by practicing responses to common interview questions.")
+        if behavioral['engagement'] < 70:
+            areas_of_growth.append("Focus on staying more engaged and attentive throughout longer interview sessions.")
+        if behavioral['eye_contact'] < 70:
+            areas_of_growth.append("Maintain more consistent eye contact to build better rapport with interviewers.")
+        if behavioral['posture'] < 75:
+            areas_of_growth.append("Be mindful of posture - sitting up straight projects confidence and professionalism.")
+        
+        if not areas_of_growth:
+            areas_of_growth.append("Continue to refine communication skills for even clearer delivery.")
+            areas_of_growth.append("Consider providing more specific examples when answering behavioral questions.")
+        
+        # Generate summary
+        if avg_score >= 85:
+            summary = "Excellent interview performance! You demonstrated strong confidence, engagement, and professional presence throughout."
+        elif avg_score >= 70:
+            summary = "Good interview performance with solid behavioral indicators. Some areas show room for improvement, but overall presentation was professional."
+        elif avg_score >= 55:
+            summary = "The interview revealed some areas where you shine and others where there's room for growth. Focus on the areas identified for improvement."
+        else:
+            summary = "The interview indicates several areas that need development. Practice and preparation will help improve your interview performance."
+        
+        return {
+            'keyStrengths': key_strengths[:3],  # Top 3 strengths
+            'areasOfGrowth': areas_of_growth[:3],  # Top 3 areas
+            'summary': summary
+        }
+    
+    def _generate_final_recommendation(self, behavior_avg: int, body_language_avg: int, cultural_fit_avg: int) -> Dict:
+        """Generate final hiring recommendation"""
+        overall_avg = (behavior_avg + body_language_avg + cultural_fit_avg) / 3
+        
+        if overall_avg >= 85:
+            return {
+                'recommendation': 'Strongly recommend',
+                'summary': 'Excellent candidate with strong behavioral indicators and professional presence. Highly recommended for the position.'
+            }
+        elif overall_avg >= 70:
+            return {
+                'recommendation': 'Recommend',
+                'summary': 'Good candidate with solid performance. Recommend proceeding to the next stage of the hiring process.'
+            }
+        elif overall_avg >= 55:
+            return {
+                'recommendation': 'Consider with reservations',
+                'summary': 'Candidate has potential but may need additional training or support in key areas.'
+            }
+        else:
+            return {
+                'recommendation': 'Not recommended at this time',
+                'summary': 'Candidate may not be ready for this role. Consider for future opportunities after skill development.'
+            }
     
     def _calculate_behavioral_metrics(self) -> Dict:
         """Calculate behavioral metrics from accumulated data"""
@@ -1324,12 +1556,212 @@ def handle_end_session(data):
 
 # ==================== REST API ENDPOINTS ====================
 
+# Store verified documents temporarily (before session creation)
+verified_documents = {}  # verification_token -> verification_data
+verification_lock = threading.Lock()
+
+
+@app.route('/api/verify-document', methods=['POST'])
+def api_verify_document_standalone():
+    """
+    Standalone document verification - verify identity BEFORE creating a session.
+    Returns a verification token that can be used when starting a session.
+    """
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({'success': False, 'error': 'No data provided'}), 400
+        
+        # Get document image
+        if 'document' not in data:
+            return jsonify({'success': False, 'error': 'No document image provided. Please upload your ID document.'}), 400
+        
+        # Get live face image
+        if 'live_face' not in data:
+            return jsonify({'success': False, 'error': 'No live face image provided. Please capture your face.'}), 400
+        
+        # Get document type (optional)
+        document_type = data.get('document_type', 'other')
+        valid_document_types = ['aadhaar', 'pan', 'passport', 'driving_license', 'voter_id', 'other']
+        if document_type not in valid_document_types:
+            document_type = 'other'
+        
+        # Get candidate info (optional)
+        candidate_name = data.get('candidate_name', '')
+        
+        # Decode document image
+        document_data = data['document']
+        if ',' in document_data:
+            document_data = document_data.split(',')[1]
+        document_bytes = base64.b64decode(document_data)
+        
+        # Decode live face image
+        live_face_data = data['live_face']
+        if ',' in live_face_data:
+            live_face_data = live_face_data.split(',')[1]
+        live_face_bytes = base64.b64decode(live_face_data)
+        
+        # Initialize Rekognition client
+        try:
+            rekognition = boto3.client(
+                'rekognition',
+                region_name='us-east-1',
+                aws_access_key_id=AWS_ACCESS_KEY_ID,
+                aws_secret_access_key=AWS_SECRET_ACCESS_KEY
+            )
+        except Exception as e:
+            logger.error(f"Failed to initialize AWS Rekognition: {e}")
+            return jsonify({'success': False, 'error': 'AWS service unavailable'}), 500
+        
+        # Step 1: Detect face in the document
+        logger.info(f"Standalone verification: Detecting face in {document_type} document...")
+        
+        doc_face_response = rekognition.detect_faces(
+            Image={'Bytes': document_bytes},
+            Attributes=['DEFAULT']
+        )
+        
+        doc_faces = doc_face_response.get('FaceDetails', [])
+        
+        if len(doc_faces) == 0:
+            return jsonify({
+                'success': False,
+                'verified': False,
+                'error': 'No face detected in the document. Please upload a clear image of your ID with a visible photo.',
+                'document_type': document_type
+            }), 400
+        
+        doc_face = doc_faces[0]
+        doc_face_confidence = doc_face.get('Confidence', 0)
+        
+        # Step 2: Detect face in the live image
+        live_face_response = rekognition.detect_faces(
+            Image={'Bytes': live_face_bytes},
+            Attributes=['DEFAULT']
+        )
+        
+        live_faces = live_face_response.get('FaceDetails', [])
+        
+        if len(live_faces) == 0:
+            return jsonify({
+                'success': False,
+                'verified': False,
+                'error': 'No face detected in the live image. Please ensure your face is clearly visible.',
+                'document_type': document_type
+            }), 400
+        
+        if len(live_faces) > 1:
+            return jsonify({
+                'success': False,
+                'verified': False,
+                'error': 'Multiple faces detected. Please ensure only you are in the frame.',
+                'document_type': document_type
+            }), 400
+        
+        live_face = live_faces[0]
+        live_face_confidence = live_face.get('Confidence', 0)
+        
+        # Step 3: Compare faces
+        similarity_threshold = 80.0
+        
+        try:
+            compare_response = rekognition.compare_faces(
+                SourceImage={'Bytes': document_bytes},
+                TargetImage={'Bytes': live_face_bytes},
+                SimilarityThreshold=50.0
+            )
+            
+            face_matches = compare_response.get('FaceMatches', [])
+            
+            if face_matches:
+                best_match = max(face_matches, key=lambda x: x.get('Similarity', 0))
+                similarity = best_match.get('Similarity', 0)
+                is_verified = similarity >= similarity_threshold
+                
+                if is_verified:
+                    # Generate verification token
+                    verification_token = str(uuid.uuid4())
+                    
+                    # Store verification data (expires in 30 minutes)
+                    with verification_lock:
+                        verified_documents[verification_token] = {
+                            'verified': True,
+                            'similarity': round(similarity, 2),
+                            'document_type': document_type,
+                            'candidate_name': candidate_name,
+                            'live_face_image': live_face_bytes,  # Store for session
+                            'timestamp': datetime.now().isoformat(),
+                            'expires_at': (datetime.now() + timedelta(minutes=30)).isoformat()
+                        }
+                    
+                    logger.info(f"Document verification PASSED: {similarity:.1f}% similarity, token: {verification_token[:8]}...")
+                    
+                    return jsonify({
+                        'success': True,
+                        'verified': True,
+                        'verification_token': verification_token,
+                        'similarity': round(similarity, 2),
+                        'threshold': similarity_threshold,
+                        'document_type': document_type,
+                        'document_face_confidence': round(doc_face_confidence, 2),
+                        'live_face_confidence': round(live_face_confidence, 2),
+                        'message': 'Identity verified successfully! You can now proceed to start the interview.',
+                        'next_step': 'Use the verification_token when calling /api/sessions/start',
+                        'token_expires_in': '30 minutes'
+                    })
+                else:
+                    logger.warning(f"Document verification FAILED: {similarity:.1f}% similarity (threshold: {similarity_threshold}%)")
+                    
+                    return jsonify({
+                        'success': True,
+                        'verified': False,
+                        'similarity': round(similarity, 2),
+                        'threshold': similarity_threshold,
+                        'document_type': document_type,
+                        'document_face_confidence': round(doc_face_confidence, 2),
+                        'live_face_confidence': round(live_face_confidence, 2),
+                        'message': f'Identity verification failed. Face similarity ({similarity:.1f}%) is below threshold ({similarity_threshold}%).',
+                        'next_step': 'Please try again with a clearer document or better lighting.'
+                    })
+            else:
+                logger.warning("Document verification FAILED: No face match found")
+                
+                return jsonify({
+                    'success': True,
+                    'verified': False,
+                    'similarity': 0,
+                    'threshold': similarity_threshold,
+                    'document_type': document_type,
+                    'document_face_confidence': round(doc_face_confidence, 2),
+                    'live_face_confidence': round(live_face_confidence, 2),
+                    'message': 'Identity verification failed. The face in the document does not match your live face.',
+                    'next_step': 'Please ensure you are using your own ID document and try again.'
+                })
+                
+        except Exception as e:
+            logger.error(f"Face comparison error: {e}")
+            return jsonify({
+                'success': False,
+                'verified': False,
+                'error': 'Could not compare faces. Please ensure both images have clear, visible faces.',
+                'document_type': document_type
+            }), 500
+            
+    except Exception as e:
+        logger.error(f"Document verification error: {e}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
 @app.route('/api/sessions/start', methods=['POST'])
 def api_start_session():
     """REST API to start a new session"""
     data = request.get_json() or {}
     session_id = data.get('session_id') or str(uuid.uuid4())
     job_data = data.get('job_data', {})
+    verification_token = data.get('verification_token')  # From pre-verification
     
     with session_lock:
         if session_id in active_sessions and active_sessions[session_id].is_active:
@@ -1342,30 +1774,74 @@ def api_start_session():
         session = LiveInterviewSession(session_id, job_data)
         active_sessions[session_id] = session
     
-    logger.info(f"Started session via REST: {session_id}")
-    return jsonify({
+    # Check if verification token was provided
+    verification_applied = False
+    verification_data = None
+    
+    if verification_token:
+        with verification_lock:
+            if verification_token in verified_documents:
+                verification_data = verified_documents[verification_token]
+                
+                # Check if token has expired
+                expires_at = datetime.fromisoformat(verification_data['expires_at'])
+                if datetime.now() < expires_at:
+                    # Apply verification to session
+                    session.document_verified = verification_data['verified']
+                    session.document_type = verification_data['document_type']
+                    session.document_verification_result = {
+                        'verified': verification_data['verified'],
+                        'similarity': verification_data['similarity'],
+                        'document_type': verification_data['document_type'],
+                        'timestamp': verification_data['timestamp']
+                    }
+                    
+                    # Auto-register face from verification
+                    if verification_data.get('live_face_image'):
+                        session.reference_face_image = verification_data['live_face_image']
+                        session.face_registered = True
+                    
+                    verification_applied = True
+                    logger.info(f"Applied verification token to session {session_id}")
+                    
+                    # Remove used token
+                    del verified_documents[verification_token]
+                else:
+                    logger.warning(f"Verification token expired for session {session_id}")
+    
+    logger.info(f"Started session via REST: {session_id} (verification_applied: {verification_applied})")
+    
+    response_data = {
         'success': True,
         'session_id': session_id,
         'status': 'active',
         'start_time': session.start_time.isoformat(),
-        'face_verification_required': True,
+        'document_verified': session.document_verified,
+        'face_registered': session.face_registered,
+        'face_verification_required': not session.face_registered,
         'websocket_url': f'ws://{request.host}/socket.io/',
         'api_endpoints': {
-            'verify_document': f'/api/sessions/{session_id}/verify-document',
-            'register_face': f'/api/sessions/{session_id}/register-face',
             'analyze_frame': f'/api/sessions/{session_id}/frame',
             'get_metrics': f'/api/sessions/{session_id}/metrics',
-            'get_alerts': f'/api/sessions/{session_id}/alerts',
-            'get_document_status': f'/api/sessions/{session_id}/document-status',
             'get_verification_status': f'/api/sessions/{session_id}/verification-status',
+            'register_face': f'/api/sessions/{session_id}/register-face',
             'end_session': f'/api/sessions/{session_id}/end'
-        },
-        'verification_flow': [
-            '1. verify_document - Upload ID document and capture live face',
-            '2. register_face - Register face for continuous verification (auto if document verified)',
-            '3. analyze_frame - Start interview with frame analysis'
-        ]
-    })
+        }
+    }
+    
+    # Add verification info if token was used
+    if verification_applied and verification_data:
+        response_data['verification_info'] = {
+            'document_type': verification_data['document_type'],
+            'similarity': verification_data['similarity'],
+            'verified_at': verification_data['timestamp']
+        }
+        response_data['message'] = 'Session started with verified identity. You can proceed directly to the interview.'
+    else:
+        response_data['message'] = 'Session started. Please verify your identity before proceeding.'
+        response_data['pre_verification_endpoint'] = '/api/verify-document'
+    
+    return jsonify(response_data)
 
 
 @app.route('/api/sessions/<session_id>/register-face', methods=['POST'])
@@ -1562,22 +2038,19 @@ def api_get_metrics(session_id):
 
 @app.route('/api/sessions/<session_id>/end', methods=['POST'])
 def api_end_session(session_id):
-    """REST API to end a session and get final report"""
+    """REST API to end a session and get final report in required UI format"""
     if session_id not in active_sessions:
-        return jsonify({'success': False, 'error': 'Invalid session'}), 404
+        return jsonify({'status': 'error', 'error': 'Invalid session'}), 404
     
     session = active_sessions[session_id]
     
     if not session.is_active:
-        return jsonify({'success': False, 'error': 'Session already ended'}), 400
+        return jsonify({'status': 'error', 'error': 'Session already ended'}), 400
     
+    # Generate and return report directly (not wrapped)
     report = session.end_session()
     
-    return jsonify({
-        'success': True,
-        'session_id': session_id,
-        'report': report
-    })
+    return jsonify(report)
 
 
 @app.route('/api/sessions', methods=['GET'])

@@ -444,11 +444,11 @@
                 </div>
 
                 <div class="controls">
-                    <button id="registerFaceBtn" class="btn btn-secondary" onclick="showFaceRegistration()" style="display: none;">
-                        👤 Register Face
+                    <button id="verifyIdentityBtn" class="btn btn-primary" onclick="showDocumentVerification()" style="background: linear-gradient(135deg, #8b5cf6, #6366f1);">
+                        🪪 Verify Identity
                     </button>
-                    <button id="startBtn" class="btn btn-primary" onclick="startSession()">
-                        ▶ Start Session
+                    <button id="startBtn" class="btn btn-primary" onclick="startInterviewSession()" disabled style="opacity: 0.5;">
+                        ▶ Start Interview
                     </button>
                     <button id="stopBtn" class="btn btn-danger" onclick="endSession()" disabled>
                         ⏹ End Session
@@ -456,6 +456,16 @@
                     <button class="btn btn-secondary" onclick="toggleSettings()">
                         ⚙ Settings
                     </button>
+                </div>
+                
+                <div id="verificationStatusCard" class="card" style="margin-top: 15px; display: none; background: linear-gradient(135deg, rgba(16, 185, 129, 0.1), rgba(16, 185, 129, 0.05)); border: 1px solid rgba(16, 185, 129, 0.3);">
+                    <div style="display: flex; align-items: center; gap: 10px;">
+                        <span style="font-size: 1.5rem;">✅</span>
+                        <div>
+                            <div style="font-weight: 600; color: #10b981;">Identity Verified</div>
+                            <div id="verificationDetails" style="font-size: 0.85rem; color: #94a3b8;">Ready to start interview</div>
+                        </div>
+                    </div>
                 </div>
 
                 <div id="settingsPanel" class="card" style="margin-top: 20px; display: none;">
@@ -624,6 +634,7 @@
         // Face registration state
         let faceRegistered = false;
         let documentVerified = false;
+        let verificationToken = null;  // Token from pre-verification
         let uploadedDocumentData = null;
         let capturedLiveFaceData = null;
         
@@ -669,7 +680,7 @@
             document.getElementById('verifyDocBtn').disabled = !ready;
         }
         
-        // Verify document against live face
+        // Verify document against live face (BEFORE creating session)
         async function verifyDocument() {
             if (!uploadedDocumentData || !capturedLiveFaceData) {
                 log('Please upload document and capture face first', 'error');
@@ -686,7 +697,8 @@
             try {
                 const documentType = document.getElementById('documentType').value;
                 
-                const response = await fetch(`${getApiUrl()}/api/sessions/${sessionId}/verify-document`, {
+                // Use standalone verification endpoint (no session required)
+                const response = await fetch(`${getApiUrl()}/api/verify-document`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
@@ -700,11 +712,12 @@
                 
                 if (data.verified) {
                     documentVerified = true;
-                    faceRegistered = data.face_registered;
+                    verificationToken = data.verification_token;  // Store token for session creation
                     
                     feedback.style.color = 'var(--success)';
                     feedback.innerHTML = `✅ Identity Verified!<br>
-                        <span style="font-size: 0.9rem;">Similarity: ${data.similarity}% | Document: ${documentType.toUpperCase()}</span>`;
+                        <span style="font-size: 0.9rem;">Similarity: ${data.similarity}% | Document: ${documentType.toUpperCase()}</span><br>
+                        <span style="font-size: 0.85rem; color: #94a3b8;">You can now start the interview</span>`;
                     
                     log(`Document verified: ${data.similarity}% match`, 'success');
                     
@@ -713,10 +726,20 @@
                     document.getElementById('faceStatus').innerHTML = '<span>✓</span> Identity Verified';
                     document.getElementById('faceStatus').style.display = 'flex';
                     
-                    // Hide overlay and start interview after delay
+                    // Enable Start Interview button
+                    document.getElementById('startBtn').disabled = false;
+                    document.getElementById('startBtn').style.opacity = '1';
+                    document.getElementById('verifyIdentityBtn').style.display = 'none';
+                    
+                    // Show verification status card
+                    document.getElementById('verificationStatusCard').style.display = 'block';
+                    document.getElementById('verificationDetails').textContent = 
+                        `${documentType.toUpperCase()} verified with ${data.similarity}% match`;
+                    
+                    // Hide overlay after delay
                     setTimeout(() => {
                         document.getElementById('documentVerifyOverlay').style.display = 'none';
-                        beginInterviewCapture();
+                        log('Click "Start Interview" to begin', 'info');
                     }, 2000);
                     
                 } else {
@@ -737,17 +760,71 @@
             }
         }
         
+        // Create session with verification token
+        async function createSessionWithVerification() {
+            try {
+                const jobTitleEl = document.getElementById('jobTitle');
+                const response = await fetch(`${getApiUrl()}/api/sessions/start`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        verification_token: verificationToken,
+                        job_data: {
+                            jobTitle: jobTitleEl ? jobTitleEl.value : 'Interview',
+                            timestamp: new Date().toISOString()
+                        }
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    sessionId = data.session_id;
+                    faceRegistered = data.face_registered;
+                    
+                    log(`Session created: ${sessionId} (verified: ${data.document_verified})`, 'success');
+                    
+                    // Update buttons
+                    document.getElementById('startBtn').disabled = true;
+                    document.getElementById('stopBtn').disabled = false;
+                    
+                    // Start interview
+                    beginInterviewCapture();
+                } else {
+                    log('Failed to create session: ' + data.error, 'error');
+                    document.getElementById('startBtn').disabled = false;
+                }
+                
+            } catch (error) {
+                log('Session creation error: ' + error.message, 'error');
+                document.getElementById('startBtn').disabled = false;
+            }
+        }
+        
         // Skip document verification (not recommended)
         function skipDocumentVerification() {
             if (confirm('⚠️ Skipping document verification is not recommended.\n\nThe candidate identity will not be verified against their ID.\n\nAre you sure you want to continue?')) {
-                log('Document verification skipped', 'warning');
+                log('Document verification skipped - using face registration only', 'warning');
                 document.getElementById('documentVerifyOverlay').style.display = 'none';
+                document.getElementById('verifyIdentityBtn').textContent = '⚠️ Not Verified';
+                document.getElementById('verifyIdentityBtn').style.background = 'var(--warning)';
+                // Enable start button but show it's not verified
+                document.getElementById('startBtn').disabled = false;
+                document.getElementById('startBtn').style.opacity = '1';
+                // Show face registration when they start
                 showFaceRegistration();
             }
         }
         
         // Show document verification
-        function showDocumentVerification() {
+        async function showDocumentVerification() {
+            // Check connection first
+            const connected = await testConnection();
+            if (!connected) {
+                log('Cannot verify - server not reachable', 'error');
+                return;
+            }
+            
             document.getElementById('documentVerifyOverlay').style.display = 'flex';
             // Reset state
             uploadedDocumentData = null;
@@ -762,22 +839,33 @@
             log('Please verify your identity with an ID document', 'info');
         }
         
-        // Start session using REST API
-        async function startSession() {
+        // Start interview session (after verification)
+        async function startInterviewSession() {
             const connected = await testConnection();
             if (!connected) {
                 log('Cannot start session - server not reachable', 'error');
                 return;
             }
 
+            if (documentVerified && verificationToken) {
+                // Create session with verification token
+                await createSessionWithVerification();
+            } else {
+                // Start without document verification (user skipped)
+                await startSessionWithoutVerification();
+            }
+        }
+        
+        // Start session without document verification (skip flow)
+        async function startSessionWithoutVerification() {
             try {
-                const jobTitle = document.getElementById('jobTitle').value;
+                const jobTitleEl = document.getElementById('jobTitle');
                 const response = await fetch(`${getApiUrl()}/api/sessions/start`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         job_data: {
-                            jobTitle: jobTitle,
+                            jobTitle: jobTitleEl ? jobTitleEl.value : 'Interview',
                             timestamp: new Date().toISOString()
                         }
                     })
@@ -787,15 +875,14 @@
                 
                 if (data.success) {
                     sessionId = data.session_id;
-                    log('Session started: ' + sessionId, 'success');
+                    log('Session started: ' + sessionId + ' (without document verification)', 'warning');
                     
                     document.getElementById('startBtn').disabled = true;
                     document.getElementById('stopBtn').disabled = false;
                     
-                    // Show document verification first (recommended flow)
-                    if (data.face_verification_required) {
-                        log('Identity verification required before proceeding', 'info');
-                        showDocumentVerification();
+                    // Show face registration if required
+                    if (data.face_verification_required && !faceRegistered) {
+                        showFaceRegistration();
                     } else {
                         beginInterviewCapture();
                     }
@@ -1021,9 +1108,14 @@
                 
                 console.log('Parsed data:', data);
                 
-                if (data.report) {
+                // New format: report is returned directly with status='success'
+                if (data.status === 'success') {
                     log('Session ended. Final report generated!', 'success');
-                    console.log('Final Report:', data.report);
+                    console.log('Final Report:', data);
+                    showFinalReport(data);  // Pass the whole response as report
+                } else if (data.report) {
+                    // Legacy format support
+                    log('Session ended. Final report generated!', 'success');
                     showFinalReport(data.report);
                 } else if (data.error) {
                     log('Server error: ' + data.error, 'error');
@@ -1229,28 +1321,23 @@
             lastReport = report; // Store for download
             log('Displaying report modal...', 'info');
             
-            // Extract data from report
+            // Extract data from new response format
             const behavioral = report.behavioral_analysis || {};
-            const bodyLang = report.body_language_analysis || {};
-            const culturalFit = report.cultural_fit_analysis || {};
-            const overallBehavior = report.overall_behavior_analysis || {};
-            const insights = report.video_analysis_insights || {};
-            const sessionSummary = report.session_summary || {};
+            const performanceBreakdown = report.performanceBreakdown || {};
+            const quickStats = report.quickStats || {};
+            const aiEvaluation = report.aiEvaluationSummary || {};
+            const videoInsights = report.video_analysis_insights || {};
+            const recommendations = report.recommendations || {};
+            const sessionMeta = report.session_metadata || {};
             const faceVerification = report.face_verification_summary || {};
             const documentVerification = report.document_verification || {};
             
-            // Calculate overall average (use overall_behavior_analysis if available, else calculate)
-            const overallAverage = overallBehavior.overallAveragePercentage || Math.round(
-                (
-                    (behavioral.eye_contact || 0) * 0.20 +
-                    (behavioral.confidence || 0) * 0.20 +
-                    (behavioral.engagement || 0) * 0.15 +
-                    (behavioral.facial_expressions || 0) * 0.15 +
-                    (behavioral.posture || 0) * 0.12 +
-                    (behavioral.voice_tone || 0) * 0.10 +
-                    (behavioral.gestures || 0) * 0.08
-                )
-            );
+            // Calculate overall average from performance breakdown
+            const behaviorScore = performanceBreakdown.behavior?.overallAveragePercentage || 0;
+            const bodyLangScore = performanceBreakdown.body_language?.overallAveragePercentage || 0;
+            const culturalScore = performanceBreakdown.culturalFit?.overallAveragePercentage || 0;
+            const overallAverage = Math.round((behaviorScore + bodyLangScore + culturalScore) / 3) || 
+                Math.round((behavioral.confidence + behavioral.engagement + behavioral.eye_contact) / 3);
             
             // Create modal HTML
             const modalHtml = `
@@ -1280,12 +1367,29 @@
                         box-shadow: 0 20px 60px rgba(0,0,0,0.5);
                     ">
                         <div style="text-align: center; margin-bottom: 25px;">
-                            <h2 style="color: #a78bfa; margin: 0; font-size: 1.8rem;">📊 Session Report</h2>
+                            <h2 style="color: #a78bfa; margin: 0; font-size: 1.8rem;">📊 Interview Analysis Report</h2>
                             <p style="color: #94a3b8; margin-top: 8px;">
-                                Duration: ${Math.round(sessionSummary.duration_seconds || 0)}s | 
-                                Frames Analyzed: ${sessionSummary.frames_analyzed || 0} |
-                                Alerts: ${sessionSummary.total_alerts || 0}
+                                Duration: ${Math.round(sessionMeta.duration_seconds || 0)}s | 
+                                Frames Analyzed: ${sessionMeta.total_frames_analyzed || 0} |
+                                Alerts: ${sessionMeta.total_alerts || 0}
                             </p>
+                        </div>
+                        
+                        <!-- Recommendation Banner -->
+                        <div style="
+                            background: ${recommendations.recommendation?.includes('Strongly') ? 'linear-gradient(135deg, rgba(16, 185, 129, 0.2), rgba(16, 185, 129, 0.1))' : 
+                                         recommendations.recommendation?.includes('Recommend') && !recommendations.recommendation?.includes('Not') ? 'linear-gradient(135deg, rgba(59, 130, 246, 0.2), rgba(59, 130, 246, 0.1))' :
+                                         recommendations.recommendation?.includes('Consider') ? 'linear-gradient(135deg, rgba(245, 158, 11, 0.2), rgba(245, 158, 11, 0.1))' :
+                                         'linear-gradient(135deg, rgba(239, 68, 68, 0.2), rgba(239, 68, 68, 0.1))'};
+                            border-radius: 12px;
+                            padding: 15px 20px;
+                            margin-bottom: 20px;
+                            border-left: 4px solid ${recommendations.recommendation?.includes('Strongly') ? '#10b981' : 
+                                                    recommendations.recommendation?.includes('Recommend') && !recommendations.recommendation?.includes('Not') ? '#3b82f6' :
+                                                    recommendations.recommendation?.includes('Consider') ? '#f59e0b' : '#ef4444'};
+                        ">
+                            <h4 style="margin: 0 0 5px 0; color: white;">📋 ${recommendations.recommendation || 'Evaluation Complete'}</h4>
+                            <p style="margin: 0; color: #94a3b8; font-size: 0.9rem;">${recommendations.summary || ''}</p>
                         </div>
                         
                         <!-- Overall Score -->
@@ -1390,7 +1494,21 @@
                             ${createMetricCard('🎤 Voice Tone', behavioral.voice_tone)}
                         </div>
                         
-                        <!-- Body Language & Cultural Fit -->
+                        <!-- Quick Stats -->
+                        <div style="
+                            display: grid;
+                            grid-template-columns: repeat(5, 1fr);
+                            gap: 10px;
+                            margin-bottom: 25px;
+                        ">
+                            ${createQuickStat('Communication', quickStats.communicationSkills)}
+                            ${createQuickStat('Confidence', quickStats.confidenceLevel)}
+                            ${createQuickStat('Leadership', quickStats.leadershipPotential)}
+                            ${createQuickStat('Problem Solving', quickStats.problemSolving)}
+                            ${createQuickStat('Technical', quickStats.technicalKnowledge)}
+                        </div>
+                        
+                        <!-- Performance Breakdown -->
                         <div style="
                             display: grid;
                             grid-template-columns: 1fr 1fr;
@@ -1399,22 +1517,22 @@
                         ">
                             <div style="background: #1a1a2e; border-radius: 12px; padding: 20px;">
                                 <h4 style="color: #a78bfa; margin: 0 0 10px 0;">🎭 Body Language</h4>
-                                <div style="font-size: 2rem; color: white; font-weight: bold;">${bodyLang.overallAveragePercentage || 0}%</div>
-                                <p style="color: #94a3b8; font-size: 0.85rem; margin-top: 8px;">${bodyLang.summary || 'N/A'}</p>
+                                <div style="font-size: 2rem; color: white; font-weight: bold;">${performanceBreakdown.body_language?.overallAveragePercentage || 0}%</div>
+                                <p style="color: #94a3b8; font-size: 0.85rem; margin-top: 8px;">${performanceBreakdown.body_language?.summary || 'N/A'}</p>
                             </div>
                             <div style="background: #1a1a2e; border-radius: 12px; padding: 20px;">
                                 <h4 style="color: #a78bfa; margin: 0 0 10px 0;">👔 Cultural Fit</h4>
-                                <div style="font-size: 2rem; color: white; font-weight: bold;">${culturalFit.overallAveragePercentage || 0}%</div>
-                                <p style="color: #94a3b8; font-size: 0.85rem; margin-top: 8px;">${culturalFit.summary || 'N/A'}</p>
+                                <div style="font-size: 2rem; color: white; font-weight: bold;">${performanceBreakdown.culturalFit?.overallAveragePercentage || 0}%</div>
+                                <p style="color: #94a3b8; font-size: 0.85rem; margin-top: 8px;">${performanceBreakdown.culturalFit?.summary || 'N/A'}</p>
                             </div>
                         </div>
                         
                         <!-- Emotion Summary -->
-                        ${behavioral.emotion_summary ? `
+                        ${report.emotion_summary && Object.keys(report.emotion_summary).length > 0 ? `
                         <div style="background: #1a1a2e; border-radius: 12px; padding: 20px; margin-bottom: 25px;">
                             <h4 style="color: #a78bfa; margin: 0 0 15px 0;">😊 Emotion Summary</h4>
                             <div style="display: flex; flex-wrap: wrap; gap: 10px;">
-                                ${Object.entries(behavioral.emotion_summary).map(([emotion, percentage]) => `
+                                ${Object.entries(report.emotion_summary).map(([emotion, percentage]) => `
                                     <div style="
                                         background: ${getEmotionColor(emotion)};
                                         padding: 8px 15px;
@@ -1443,59 +1561,53 @@
                         </div>
                         `}
                         
-                        <!-- Insights -->
-                        ${insights.positive_indicators && insights.positive_indicators.length > 0 ? `
+                        <!-- Video Analysis Insights -->
+                        ${videoInsights.positive_indicators && videoInsights.positive_indicators.length > 0 ? `
                         <div style="background: rgba(16, 185, 129, 0.1); border-radius: 12px; padding: 15px; margin-bottom: 15px; border-left: 4px solid #10b981;">
-                            <h4 style="color: #10b981; margin: 0 0 10px 0;">✅ Strengths</h4>
+                            <h4 style="color: #10b981; margin: 0 0 10px 0;">✅ Positive Indicators</h4>
                             <ul style="color: #f1f5f9; margin: 0; padding-left: 20px;">
-                                ${(insights.positive_indicators || []).map(s => `<li style="margin-bottom: 5px;">${s}</li>`).join('')}
+                                ${(videoInsights.positive_indicators || []).map(s => `<li style="margin-bottom: 5px;">${s}</li>`).join('')}
                             </ul>
                         </div>
                         ` : ''}
                         
-                        ${insights.areas_for_improvement && insights.areas_for_improvement.length > 0 ? `
+                        ${videoInsights.areas_for_improvement && videoInsights.areas_for_improvement.length > 0 ? `
                         <div style="background: rgba(245, 158, 11, 0.1); border-radius: 12px; padding: 15px; margin-bottom: 15px; border-left: 4px solid #f59e0b;">
                             <h4 style="color: #f59e0b; margin: 0 0 10px 0;">📈 Areas for Improvement</h4>
                             <ul style="color: #f1f5f9; margin: 0; padding-left: 20px;">
-                                ${(insights.areas_for_improvement || []).map(s => `<li style="margin-bottom: 5px;">${s}</li>`).join('')}
+                                ${(videoInsights.areas_for_improvement || []).map(s => `<li style="margin-bottom: 5px;">${s}</li>`).join('')}
                             </ul>
                         </div>
                         ` : ''}
                         
-                        ${insights.recommendations && insights.recommendations.length > 0 ? `
+                        ${videoInsights.recommendations && videoInsights.recommendations.length > 0 ? `
                         <div style="background: rgba(124, 58, 237, 0.1); border-radius: 12px; padding: 15px; margin-bottom: 20px; border-left: 4px solid #7c3aed;">
                             <h4 style="color: #a78bfa; margin: 0 0 10px 0;">💡 Recommendations</h4>
                             <ul style="color: #f1f5f9; margin: 0; padding-left: 20px;">
-                                ${(insights.recommendations || []).map(s => `<li style="margin-bottom: 5px;">${s}</li>`).join('')}
+                                ${(videoInsights.recommendations || []).map(s => `<li style="margin-bottom: 5px;">${s}</li>`).join('')}
                             </ul>
                         </div>
                         ` : ''}
                         
-                        ${report.ai_summary ? `
+                        <!-- AI Evaluation Summary -->
+                        ${aiEvaluation.summary ? `
                         <div style="background: linear-gradient(135deg, rgba(124, 58, 237, 0.15) 0%, rgba(167, 139, 250, 0.15) 100%); border-radius: 12px; padding: 20px; margin-bottom: 20px; border: 1px solid rgba(124, 58, 237, 0.3);">
-                            <h4 style="color: #a78bfa; margin: 0 0 12px 0;">🤖 AI Analysis Summary</h4>
-                            <p style="color: #f1f5f9; line-height: 1.6; margin: 0;">${report.ai_summary.summary || ''}</p>
-                            ${report.ai_summary.keyStrengths && report.ai_summary.keyStrengths.length > 0 ? `
+                            <h4 style="color: #a78bfa; margin: 0 0 12px 0;">🤖 AI Evaluation Summary</h4>
+                            <p style="color: #f1f5f9; line-height: 1.6; margin: 0;">${aiEvaluation.summary}</p>
+                            ${aiEvaluation.keyStrengths && aiEvaluation.keyStrengths.length > 0 ? `
                                 <div style="margin-top: 12px;">
                                     <strong style="color: #10b981;">Key Strengths:</strong>
                                     <ul style="color: #94a3b8; margin: 5px 0 0 0; padding-left: 20px;">
-                                        ${report.ai_summary.keyStrengths.map(s => `<li>${s}</li>`).join('')}
+                                        ${aiEvaluation.keyStrengths.map(s => `<li>${s}</li>`).join('')}
                                     </ul>
                                 </div>
                             ` : ''}
-                            ${report.ai_summary.areasOfGrowth && report.ai_summary.areasOfGrowth.length > 0 ? `
+                            ${aiEvaluation.areasOfGrowth && aiEvaluation.areasOfGrowth.length > 0 ? `
                                 <div style="margin-top: 12px;">
                                     <strong style="color: #f59e0b;">Areas of Growth:</strong>
                                     <ul style="color: #94a3b8; margin: 5px 0 0 0; padding-left: 20px;">
-                                        ${report.ai_summary.areasOfGrowth.map(s => `<li>${s}</li>`).join('')}
+                                        ${aiEvaluation.areasOfGrowth.map(s => `<li>${s}</li>`).join('')}
                                     </ul>
-                                </div>
-                            ` : ''}
-                            ${report.ai_summary.overallVideoScore ? `
-                                <div style="margin-top: 15px; text-align: center;">
-                                    <span style="background: #7c3aed; color: white; padding: 6px 16px; border-radius: 20px; font-weight: 600;">
-                                        AI Score: ${report.ai_summary.overallVideoScore}%
-                                    </span>
                                 </div>
                             ` : ''}
                         </div>
@@ -1557,6 +1669,23 @@
                 <div style="background: #1a1a2e; border-radius: 12px; padding: 15px; text-align: center;">
                     <div style="font-size: 1.8rem; color: ${color}; font-weight: bold;">${score}%</div>
                     <div style="color: #94a3b8; font-size: 0.85rem; margin-top: 5px;">${label}</div>
+                </div>
+            `;
+        }
+        
+        function createQuickStat(label, level) {
+            const colors = {
+                'Excellent': '#10b981',
+                'Good': '#3b82f6',
+                'Fair': '#a78bfa',
+                'Needs Improvement': '#f59e0b',
+                'Poor': '#ef4444'
+            };
+            const color = colors[level] || '#6b7280';
+            return `
+                <div style="background: #1a1a2e; border-radius: 10px; padding: 12px 8px; text-align: center;">
+                    <div style="font-size: 0.7rem; color: #94a3b8; margin-bottom: 5px;">${label}</div>
+                    <div style="font-size: 0.8rem; color: ${color}; font-weight: 600;">${level || 'N/A'}</div>
                 </div>
             `;
         }

@@ -59,26 +59,26 @@ This API provides real-time video analysis for interview proctoring, including:
 
 ## Quick Start
 
-### Recommended API Flow (with Document Verification):
+### Recommended API Flow (Document Verification BEFORE Session):
 
 ```
-1. POST /api/sessions/start              → Create session
-2. POST /api/sessions/{id}/verify-document  → Verify ID document against live face ⭐ NEW
+1. POST /api/verify-document             → Verify ID document (returns verification_token) ⭐
+2. POST /api/sessions/start              → Create session with verification_token
 3. POST /api/sessions/{id}/frame         → Send frames (loop every 1 second)
 4. GET  /api/sessions/{id}/metrics       → Get live metrics (optional)
 5. POST /api/sessions/{id}/end           → End session & get report
 ```
 
-### Alternative Flow (Face Registration Only):
+### Alternative Flow (Skip Document Verification):
 
 ```
-1. POST /api/sessions/start              → Create session
+1. POST /api/sessions/start              → Create session (without verification)
 2. POST /api/sessions/{id}/register-face → Register candidate face
 3. POST /api/sessions/{id}/frame         → Send frames (loop every 1 second)
 4. POST /api/sessions/{id}/end           → End session & get report
 ```
 
-> **Note:** Document verification automatically registers the face if successful, so you don't need to call register-face separately.
+> **Note:** Document verification is done BEFORE creating a session. If successful, it returns a `verification_token` that you pass when starting the session. The face is automatically registered.
 
 ---
 
@@ -118,7 +118,7 @@ curl https://fexo.deepvox.ai/health
 
 ### 2. Start Session
 
-Create a new interview proctoring session.
+Create a new interview proctoring session. **Optionally pass a `verification_token` from document verification.**
 
 **Endpoint:** `POST /api/sessions/start`
 
@@ -127,46 +127,82 @@ Create a new interview proctoring session.
 Content-Type: application/json
 ```
 
-**Request Body:**
+**Request Body (with verification token - recommended):**
+```json
+{
+  "verification_token": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "job_data": {
+    "jobTitle": "Software Engineer",
+    "company": "TechCorp",
+    "candidateName": "John Doe"
+  }
+}
+```
+
+**Request Body (without verification - not recommended):**
 ```json
 {
   "job_data": {
     "jobTitle": "Software Engineer",
     "company": "TechCorp",
-    "candidateName": "John Doe",
-    "interviewType": "Technical"
+    "candidateName": "John Doe"
   }
 }
 ```
 
-**Response:**
+**Response (with verification token):**
 ```json
 {
   "success": true,
   "session_id": "8ab64dbf-839d-4d3d-91b2-7c99d746119d",
   "status": "active",
   "start_time": "2026-01-21T10:00:00.000000",
-  "face_verification_required": true,
-  "websocket_url": "ws://localhost:5001/socket.io/",
-  "api_endpoints": {
-    "verify_document": "/api/sessions/8ab64dbf-839d-4d3d-91b2-7c99d746119d/verify-document",
-    "register_face": "/api/sessions/8ab64dbf-839d-4d3d-91b2-7c99d746119d/register-face",
-    "analyze_frame": "/api/sessions/8ab64dbf-839d-4d3d-91b2-7c99d746119d/frame",
-    "get_metrics": "/api/sessions/8ab64dbf-839d-4d3d-91b2-7c99d746119d/metrics",
-    "get_alerts": "/api/sessions/8ab64dbf-839d-4d3d-91b2-7c99d746119d/alerts",
-    "get_document_status": "/api/sessions/8ab64dbf-839d-4d3d-91b2-7c99d746119d/document-status",
-    "get_verification_status": "/api/sessions/8ab64dbf-839d-4d3d-91b2-7c99d746119d/verification-status",
-    "end_session": "/api/sessions/8ab64dbf-839d-4d3d-91b2-7c99d746119d/end"
+  "document_verified": true,
+  "face_registered": true,
+  "face_verification_required": false,
+  "message": "Session started with verified identity. You can proceed directly to the interview.",
+  "verification_info": {
+    "document_type": "aadhaar",
+    "similarity": 94.5,
+    "verified_at": "2026-01-21T09:59:30.000000"
   },
-  "verification_flow": [
-    "1. verify_document - Upload ID document and capture live face",
-    "2. register_face - Register face for continuous verification (auto if document verified)",
-    "3. analyze_frame - Start interview with frame analysis"
-  ]
+  "api_endpoints": {
+    "analyze_frame": "/api/sessions/{id}/frame",
+    "get_metrics": "/api/sessions/{id}/metrics",
+    "get_document_status": "/api/sessions/{id}/document-status",
+    "get_verification_status": "/api/sessions/{id}/verification-status",
+    "register_face": "/api/sessions/{id}/register-face",
+    "end_session": "/api/sessions/{id}/end"
+  }
 }
 ```
 
-**cURL:**
+**Response (without verification token):**
+```json
+{
+  "success": true,
+  "session_id": "8ab64dbf-839d-4d3d-91b2-7c99d746119d",
+  "status": "active",
+  "document_verified": false,
+  "face_registered": false,
+  "face_verification_required": true,
+  "message": "Session started. Please verify your identity before proceeding.",
+  "pre_verification_endpoint": "/api/verify-document",
+  "api_endpoints": { ... }
+}
+```
+
+**cURL (with verification token):**
+```bash
+curl -X POST https://fexo.deepvox.ai/api/sessions/start \
+  -H "Content-Type: application/json" \
+  -d '{
+    "verification_token": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "job_data": {"jobTitle": "Software Engineer"}
+  }'
+```
+
+**cURL (without verification):**
 ```bash
 curl -X POST https://fexo.deepvox.ai/api/sessions/start \
   -H "Content-Type: application/json" \
@@ -175,9 +211,9 @@ curl -X POST https://fexo.deepvox.ai/api/sessions/start \
 
 ---
 
-### 3. Verify Document (ID Verification) ⭐ NEW
+### 3. Verify Document (ID Verification) ⭐ STANDALONE
 
-**Verify candidate's identity by comparing face from ID document with live captured face.**
+**Verify candidate's identity BEFORE creating a session.** This endpoint compares the face from an ID document with a live captured face and returns a verification token.
 
 Supported document types:
 - Aadhaar Card
@@ -187,7 +223,9 @@ Supported document types:
 - Voter ID
 - Other Government ID
 
-**Endpoint:** `POST /api/sessions/{session_id}/verify-document`
+**Endpoint:** `POST /api/verify-document`
+
+> **Note:** This is a standalone endpoint - no session ID required!
 
 **Headers:**
 ```
@@ -214,14 +252,15 @@ Content-Type: application/json
 {
   "success": true,
   "verified": true,
+  "verification_token": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
   "similarity": 94.5,
   "threshold": 80.0,
   "document_type": "aadhaar",
   "document_face_confidence": 99.2,
   "live_face_confidence": 99.8,
-  "message": "Identity verified successfully! Document face matches live face.",
-  "face_registered": true,
-  "next_step": "You can now proceed with the interview."
+  "message": "Identity verified successfully! You can now proceed to start the interview.",
+  "next_step": "Use the verification_token when calling /api/sessions/start",
+  "token_expires_in": "30 minutes"
 }
 ```
 
@@ -264,7 +303,7 @@ Multiple faces in live image:
 
 **cURL:**
 ```bash
-curl -X POST https://fexo.deepvox.ai/api/sessions/{session_id}/verify-document \
+curl -X POST https://fexo.deepvox.ai/api/verify-document \
   -H "Content-Type: application/json" \
   -d '{
     "document": "data:image/jpeg;base64,/9j/4AAQ...",
@@ -273,7 +312,11 @@ curl -X POST https://fexo.deepvox.ai/api/sessions/{session_id}/verify-document \
   }'
 ```
 
-> **Note:** If document verification succeeds, the live face is automatically registered for continuous verification during the interview. You don't need to call `/register-face` separately.
+> **Important:** 
+> - This endpoint does NOT require a session ID
+> - Save the `verification_token` from the response
+> - Pass the token when calling `/api/sessions/start` to link verification to session
+> - Token expires in 30 minutes
 
 ---
 
