@@ -934,6 +934,10 @@ class LiveInterviewSession:
                     'answeredAveragePercentage': round(behavioral_metrics['engagement'] * 0.6),
                     'overallAveragePercentage': round(behavioral_metrics['engagement'] * 0.6),
                     'summary': self._get_performance_summary('technical', round(behavioral_metrics['engagement'] * 0.6))
+                },
+                'professionalAttire': {
+                    'overallAveragePercentage': cultural_fit_avg,
+                    'summary': self._get_performance_summary('cultural_fit', cultural_fit_avg)
                 }
             },
             
@@ -943,15 +947,16 @@ class LiveInterviewSession:
                 'confidenceLevel': self._get_level_label(behavioral_metrics['confidence']),
                 'leadershipPotential': self._get_level_label(round(behavioral_metrics['confidence'] * 0.7)),
                 'problemSolving': self._get_level_label(round((behavioral_metrics['engagement'] + behavioral_metrics['eye_contact']) / 2 * 0.8)),
-                'technicalKnowledge': self._get_level_label(round(behavioral_metrics['engagement'] * 0.6))
+                'technicalKnowledge': self._get_level_label(round(behavioral_metrics['engagement'] * 0.6)),
+                'professionalAttire': self._get_level_label(cultural_fit_avg)
             },
             
-            # AI Evaluation Summary (required format)
-            'aiEvaluationSummary': self._generate_ai_evaluation_summary(behavioral_metrics, body_language_analysis, ai_summary),
+            # AI Evaluation Summary - USE LLM when available for dynamic, varied feedback
+            'aiEvaluationSummary': self._build_ai_evaluation_summary(behavioral_metrics, body_language_analysis, ai_summary, video_insights),
             
             # Video Analysis Insights (required format)
             'video_analysis_insights': {
-                'keyStrengths': video_insights.get('strengths', []),
+                'keyStrengths': video_insights.get('positive_indicators', []) or video_insights.get('keyStrengths', []),
                 'areasOfGrowth': video_insights.get('areas_for_improvement', []),
                 'positive_indicators': video_insights.get('positive_indicators', []),
                 'areas_for_improvement': video_insights.get('areas_for_improvement', []),
@@ -1060,45 +1065,54 @@ class LiveInterviewSession:
         
         return category_summaries[0]
     
-    def _generate_ai_evaluation_summary(self, behavioral: Dict, body_language: Dict, ai_summary: str) -> Dict:
-        """Generate AI evaluation summary in required format"""
-        avg_score = (behavioral['confidence'] + behavioral['engagement'] + behavioral['eye_contact']) / 3
+    def _build_ai_evaluation_summary(self, behavioral: Dict, body_language: Dict, ai_summary: Optional[Dict], video_insights: Dict) -> Dict:
+        """
+        Build AI evaluation summary - USE LLM output when available for dynamic, varied feedback.
+        Falls back to rule-based when LLM unavailable.
+        """
+        # Use LLM-generated summary when available - produces varied, contextual feedback per session
+        if ai_summary and isinstance(ai_summary, dict):
+            llm_summary = ai_summary.get('summary', '').strip()
+            llm_strengths = ai_summary.get('keyStrengths') or ai_summary.get('strengths')
+            llm_growth = ai_summary.get('areasOfGrowth') or ai_summary.get('areas_of_growth')
+            
+            if llm_summary and (llm_strengths or llm_growth):
+                return {
+                    'summary': llm_summary,
+                    'keyStrengths': (llm_strengths if isinstance(llm_strengths, list) else [llm_strengths])[:5] if llm_strengths else [],
+                    'areasOfGrowth': (llm_growth if isinstance(llm_growth, list) else [llm_growth])[:5] if llm_growth else []
+                }
         
-        # Generate key strengths based on high scores
-        key_strengths = []
-        if behavioral['confidence'] >= 80:
-            key_strengths.append("You demonstrate strong self-assurance and confidence throughout the interview, which creates a positive impression.")
-        if behavioral['eye_contact'] >= 80:
-            key_strengths.append("Excellent eye contact maintained consistently, showing engagement and building rapport effectively.")
-        if behavioral['engagement'] >= 80:
-            key_strengths.append("You have a strong passion for continuous learning, as shown by your active engagement and attentiveness.")
-        if behavioral['posture'] >= 80:
+        # Fallback: rule-based (when LLM unavailable or returned invalid data)
+        return self._generate_ai_evaluation_summary_fallback(behavioral, body_language, video_insights)
+    
+    def _generate_ai_evaluation_summary_fallback(self, behavioral: Dict, body_language: Dict, video_insights: Dict) -> Dict:
+        """Fallback rule-based AI evaluation when LLM unavailable"""
+        avg_score = (behavioral.get('confidence', 0) + behavioral.get('engagement', 0) + behavioral.get('eye_contact', 0)) / 3
+        
+        # Merge video insights with rule-based - ensures variation from session data
+        key_strengths = list(video_insights.get('positive_indicators', []))[:2]
+        areas_of_growth = list(video_insights.get('areas_for_improvement', []))[:2]
+        
+        if behavioral.get('confidence', 0) >= 80 and not any('confidence' in s.lower() for s in key_strengths):
+            key_strengths.insert(0, "You demonstrate strong self-assurance and confidence throughout the interview, which creates a positive impression.")
+        if behavioral.get('eye_contact', 0) >= 80 and not any('eye contact' in s.lower() for s in key_strengths):
+            key_strengths.insert(0, "Excellent eye contact maintained consistently, showing engagement and building rapport effectively.")
+        if behavioral.get('posture', 0) >= 80 and not any('posture' in s.lower() for s in key_strengths):
             key_strengths.append("Professional posture maintained throughout, projecting confidence and readiness.")
-        if behavioral['gestures'] >= 75:
-            key_strengths.append("Natural use of gestures complements your verbal communication effectively.")
+        
+        if behavioral.get('facial_expressions', 100) < 70:
+            areas_of_growth.insert(0, "Practice using more varied facial expressions to convey enthusiasm and engagement during responses.")
+        if behavioral.get('engagement', 100) < 70:
+            areas_of_growth.append("Focus on staying more engaged and attentive throughout longer interview sessions.")
+        if behavioral.get('eye_contact', 100) < 70:
+            areas_of_growth.append("Maintain more consistent eye contact to build better rapport with interviewers.")
         
         if not key_strengths:
-            key_strengths.append("Shows willingness to participate and engage in the interview process.")
-            key_strengths.append("Demonstrates basic understanding of fundamental concepts.")
-        
-        # Generate areas of growth based on lower scores
-        areas_of_growth = []
-        if behavioral['facial_expressions'] < 70:
-            areas_of_growth.append("Practice using more varied facial expressions to convey enthusiasm and engagement during responses.")
-        if behavioral['confidence'] < 70:
-            areas_of_growth.append("Work on building confidence by practicing responses to common interview questions.")
-        if behavioral['engagement'] < 70:
-            areas_of_growth.append("Focus on staying more engaged and attentive throughout longer interview sessions.")
-        if behavioral['eye_contact'] < 70:
-            areas_of_growth.append("Maintain more consistent eye contact to build better rapport with interviewers.")
-        if behavioral['posture'] < 75:
-            areas_of_growth.append("Be mindful of posture - sitting up straight projects confidence and professionalism.")
-        
+            key_strengths = ["Shows willingness to participate and engage.", "Demonstrates basic understanding of concepts."]
         if not areas_of_growth:
-            areas_of_growth.append("Continue to refine communication skills for even clearer delivery.")
-            areas_of_growth.append("Consider providing more specific examples when answering behavioral questions.")
+            areas_of_growth = ["Continue to refine communication skills.", "Provide more specific examples when answering."]
         
-        # Generate summary
         if avg_score >= 85:
             summary = "Excellent interview performance! You demonstrated strong confidence, engagement, and professional presence throughout."
         elif avg_score >= 70:
@@ -1109,8 +1123,8 @@ class LiveInterviewSession:
             summary = "The interview indicates several areas that need development. Practice and preparation will help improve your interview performance."
         
         return {
-            'keyStrengths': key_strengths[:3],  # Top 3 strengths
-            'areasOfGrowth': areas_of_growth[:3],  # Top 3 areas
+            'keyStrengths': key_strengths[:5],
+            'areasOfGrowth': areas_of_growth[:5],
             'summary': summary
         }
     
@@ -1348,29 +1362,36 @@ class LiveInterviewSession:
         for alert_type in alert_types:
             alert_summary[alert_type] = alert_types.count(alert_type)
         
+        emotion_data = behavioral_analysis.get('emotion_summary', {})
+        emotion_str = ', '.join(f'{k}: {round(v)}%' for k, v in emotion_data.items()) if emotion_data else 'Not available'
+        
         prompt = f"""
-        Based on the following live interview video analysis data, provide a comprehensive evaluation summary:
+        Analyze this SPECIFIC interview session and provide a UNIQUE, personalized evaluation. Each session is different - your feedback must reflect THIS candidate's actual metrics.
         
-        Session Duration: {((self.end_time or datetime.now()) - self.start_time).total_seconds():.0f} seconds
-        Frames Analyzed: {self.analyzed_frame_count}
-        Total Alerts: {len(self.alert_history)}
+        SESSION DATA (use these exact numbers - they vary per interview):
+        - Duration: {((self.end_time or datetime.now()) - self.start_time).total_seconds():.0f} seconds
+        - Frames Analyzed: {self.analyzed_frame_count}
+        - Alerts During Session: {len(self.alert_history)} - Types: {list(set(alert_types)) if alert_types else 'None'}
         
-        Behavioral Metrics:
+        BEHAVIORAL METRICS (candidate-specific, use for personalized feedback):
         - Eye Contact: {behavioral_analysis.get('eye_contact', 0)}%
         - Confidence: {behavioral_analysis.get('confidence', 0)}%
         - Engagement: {behavioral_analysis.get('engagement', 0)}%
         - Posture: {behavioral_analysis.get('posture', 0)}%
         - Facial Expressions: {behavioral_analysis.get('facial_expressions', 0)}%
+        - Gestures: {behavioral_analysis.get('gestures', 0)}%
+        - Voice Tone: {behavioral_analysis.get('voice_tone', 0)}%
         
         Body Language Score: {body_language_analysis.get('overall_score', 0)}%
+        Emotion Distribution: {emotion_str}
         
-        Alert Summary: {alert_summary if alert_summary else 'No alerts'}
+        IMPORTANT: Write SPECIFIC feedback based on these exact numbers. A 92% eye contact deserves different praise than 65%. A 41% facial expression needs specific improvement advice. Do NOT give generic feedback - make it unique to THIS session's data.
         
-        Provide your response in JSON format:
+        Respond in valid JSON only (overallVideoScore must be a number 0-100):
         {{
-            "summary": "Brief overview of candidate's video presence",
-            "keyStrengths": ["strength 1", "strength 2"],
-            "areasOfGrowth": ["improvement area 1", "improvement area 2"],
+            "summary": "2-3 sentences tailored to these specific scores",
+            "keyStrengths": ["specific strength based on high scores", "another specific strength"],
+            "areasOfGrowth": ["specific improvement for low scores", "another specific area"],
             "overallVideoScore": 75
         }}
         """
@@ -1380,11 +1401,11 @@ class LiveInterviewSession:
                 response = self.openai_client.chat.completions.create(
                     model="gpt-4o",
                     messages=[
-                        {"role": "system", "content": "You are an expert interview coach analyzing video interview performance."},
+                        {"role": "system", "content": "You are an expert interview coach. Provide unique, personalized feedback for each candidate. Never repeat the same phrases - tailor every response to the specific metrics provided."},
                         {"role": "user", "content": prompt}
                     ],
-                    temperature=0.7,
-                    max_tokens=500
+                    temperature=0.85,
+                    max_tokens=600
                 )
                 
                 usage = response.usage
